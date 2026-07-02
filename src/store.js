@@ -32,6 +32,7 @@ export function applyStoredSettings(settings, stored) {
   if (stored.pagespeed_interval_seconds) settings.pageSpeed.minIntervalMs = Number(stored.pagespeed_interval_seconds) * 1000;
   if (stored.sweep_interval_seconds) settings.sweepIntervalSeconds = Number(stored.sweep_interval_seconds);
   if (stored.ssl_warn_days) settings.sslWarnDays = Number(stored.ssl_warn_days);
+  if (stored.history_retention_days !== undefined && stored.history_retention_days !== "") settings.historyRetentionDays = Number(stored.history_retention_days);
 }
 
 export function loadSettings() {
@@ -48,6 +49,7 @@ export function loadSettings() {
     },
     sweepIntervalSeconds: num(process.env.SWEEP_INTERVAL_SECONDS, 60),
     sslWarnDays: num(process.env.SSL_WARN_DAYS, 14),
+    historyRetentionDays: num(process.env.HISTORY_RETENTION_DAYS, 180),
     publicUrl: (process.env.PUBLIC_URL || `http://localhost:${num(process.env.PORT, 4000)}`).replace(/\/$/, ""),
     sessionSecret: process.env.SESSION_SECRET || "",
     google: {

@@ -288,6 +288,12 @@ export async function computeUptime(websiteId, days = 30) {
   if (cur === "fail") downtime += now - cursor;
   return Math.round(Math.max(0, Math.min(100, (1 - downtime / (now - start)) * 100)) * 100) / 100;
 }
+// Retention: prune trend samples older than N days. status_events are tiny and
+// kept indefinitely (they back uptime), so only metric_samples are pruned.
+export async function deleteOldMetricSamples(days) {
+  const { rowCount } = await query("delete from metric_samples where at < now() - ($1 * interval '1 day')", [days]);
+  return rowCount;
+}
 
 // ---- Startup: bootstrap admins + migrate sites.json ------------------------
 export async function bootstrap() {

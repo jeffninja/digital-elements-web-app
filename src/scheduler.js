@@ -2,7 +2,7 @@
 
 import { loadSites, loadResults, saveResults } from "./store.js";
 import { runAll, runLandingPages } from "./runner.js";
-import { getLandingPages, recordStatusEvent, recordMetricSample } from "./db.js";
+import { getLandingPages, recordStatusEvent, recordMetricSample, deleteOldMetricSamples } from "./db.js";
 import { diffRuns, dispatchAlerts } from "./alerts.js";
 
 let isRunning = false;
@@ -66,7 +66,18 @@ export function isCheckRunning() {
 // Reading the interval live means Settings changes take effect without a restart.
 export function startScheduler(settings) {
   let lastSweep = 0;
+  let lastCleanup = 0;
   setInterval(() => {
+    // Daily retention prune (0 = keep forever). Runs on the first tick after boot.
+    if (Date.now() - lastCleanup >= 86400000) {
+      lastCleanup = Date.now();
+      const days = settings.historyRetentionDays;
+      if (days && days > 0) {
+        deleteOldMetricSamples(days)
+          .then((n) => { if (n) console.log(`[retention] pruned ${n} metric sample(s) older than ${days}d`); })
+          .catch((err) => console.error("[retention] prune failed:", err.message));
+      }
+    }
     const iv = Math.max(15, settings.sweepIntervalSeconds || 60) * 1000;
     if (Date.now() - lastSweep < iv) return;
     lastSweep = Date.now();

@@ -267,6 +267,7 @@ function settingsView() {
     pagespeedIntervalSeconds: Math.round((settings.pageSpeed.minIntervalMs || 120000) / 1000),
     sweepIntervalSeconds: settings.sweepIntervalSeconds || 60,
     sslWarnDays: settings.sslWarnDays || 14,
+    historyRetentionDays: settings.historyRetentionDays ?? 180,
   };
 }
 const clamp = (n, lo, hi) => Math.min(hi, Math.max(lo, Math.round(Number(n) || 0)));
@@ -280,6 +281,10 @@ app.put("/api/settings", requireAuth, requirePerm("manageSettings"), async (req,
   if (b.pagespeedIntervalSeconds != null) toStore.pagespeed_interval_seconds = String(clamp(b.pagespeedIntervalSeconds, 60, 86400));
   if (b.sweepIntervalSeconds != null) toStore.sweep_interval_seconds = String(clamp(b.sweepIntervalSeconds, 15, 3600));
   if (b.sslWarnDays != null) toStore.ssl_warn_days = String(clamp(b.sslWarnDays, 1, 90));
+  if (b.historyRetentionDays != null) {
+    const n = Math.round(Number(b.historyRetentionDays) || 0);
+    toStore.history_retention_days = String(n <= 0 ? 0 : Math.min(730, Math.max(30, n)));
+  }
   try {
     await setAppSettings(toStore);
     applyStoredSettings(settings, toStore); // takes effect on the next sweep/tick

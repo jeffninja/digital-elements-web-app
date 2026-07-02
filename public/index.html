@@ -278,8 +278,13 @@
   .hist-top { display: flex; align-items: baseline; gap: 8px; }
   .hist-up { font-family: var(--display); font-weight: 700; font-size: 22px; }
   .hist-up-lbl { color: var(--muted); font-size: 12px; }
-  .hist-spark { display: flex; align-items: center; gap: 10px; margin-top: 10px; }
-  .hist-spark-lbl { color: var(--muted); font-family: var(--mono); font-size: 10px; text-transform: uppercase; letter-spacing: 0.05em; }
+  .hranges { margin-left: auto; display: flex; gap: 4px; }
+  .hrange { background: var(--panel-2); border: 1px solid var(--line); color: var(--muted); border-radius: 7px; padding: 3px 9px; font-size: 11px; cursor: pointer; font-family: var(--mono); }
+  .hrange.on { border-color: var(--accent); color: var(--text); }
+  .hcharts { display: grid; grid-template-columns: repeat(auto-fit, minmax(190px, 1fr)); gap: 12px; margin: 14px 0; }
+  .hchart { background: var(--panel); border: 1px solid var(--line-soft); border-radius: 10px; padding: 10px 12px; }
+  .hchart-head { display: flex; justify-content: space-between; align-items: baseline; font-size: 10.5px; color: var(--muted); font-family: var(--mono); text-transform: uppercase; letter-spacing: 0.04em; margin-bottom: 6px; }
+  .hchart-last { color: var(--text); font-size: 13px; font-weight: 600; }
   .hist-list { list-style: none; margin: 12px 0 0; padding: 0; }
   .hist-list li { display: flex; align-items: center; gap: 8px; font-size: 12.5px; padding: 5px 0; border-top: 1px solid var(--line-soft); }
   .hist-list li:first-child { border-top: 0; }
@@ -405,6 +410,7 @@ let LANDING = [], editingLandingId = null;
 let resultsTimer = null, websitesTimer = null, currentView = "dashboard";
 let ME = { user: null, perms: {} };
 const openRows = new Set();
+const detailCache = {}; // siteId -> { social, hist } rendered HTML, survives board re-renders
 const esc = (s) => String(s == null ? "" : s).replace(/[&<>"]/g, (c) => ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
 
 // ---------- Data loading + live polling ----------
@@ -532,7 +538,8 @@ function detailFoot(s) {
   if (ME.perms.manageWebsites) btns += `<button class="btn sm" onclick="event.stopPropagation(); editWebsite('${s.id}')">Edit site</button>`;
   if (ME.perms.deleteWebsite) btns += `<button class="btn sm danger" onclick="event.stopPropagation(); deleteWebsite('${s.id}', '${esc((s.name || "").replace(/'/g, ""))}')">Delete site</button>`;
   const actions = btns ? `<div class="site-actions">${btns}</div>` : "";
-  return `<div class="detail-foot">${actions}<div class="social-box"><h4>Social links</h4><div id="social-${s.id}">\u2026</div></div><div class="social-box" style="margin-top:16px"><h4>History (30 days)</h4><div id="hist-${s.id}">\u2026</div></div></div>`;
+  const cache = detailCache[s.id] || {};
+  return `<div class="detail-foot">${actions}<div class="social-box"><h4>Social links</h4><div id="social-${s.id}">${cache.social || "\u2026"}</div></div><div class="social-box" style="margin-top:16px"><h4>History (30 days)</h4><div id="hist-${s.id}">${cache.hist || "\u2026"}</div></div></div>`;
 }
 function toggle(id) {
   if (openRows.has(id)) openRows.delete(id);
@@ -723,7 +730,7 @@ async function deleteWebsite(id, name) {
   if (!confirm(`Delete "${name}"? This removes it from monitoring and deletes its social links.`)) return;
   const res = await fetch("/api/websites/" + id, { method: "DELETE" });
   const j = await res.json();
-  if (j.ok) { openRows.delete(id); afterMutation(); } else alert(j.error || "Delete failed");
+  if (j.ok) { openRows.delete(id); delete detailCache[id]; afterMutation(); } else alert(j.error || "Delete failed");
 }
 
 // ---------- Landing pages ----------
@@ -886,7 +893,9 @@ async function loadSocial(siteId) {
       ? '<ul class="social-list">' + links.map((l) => `<li><a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.platform)}</a>${canEdit ? `<button class="linkx" onclick="removeSocial('${l.id}','${siteId}')">remove</button>` : ""}</li>`).join("") + "</ul>"
       : '<div class="sub" style="font-size:12px">No social links yet.</div>';
     const adder = canEdit ? `<div class="social-add"><input class="plat" id="sp-${siteId}" placeholder="Platform" /><input id="su-${siteId}" placeholder="https://\u2026" /><button class="btn-primary" onclick="addSocial('${siteId}')">Add</button></div>` : "";
-    box.innerHTML = list + adder;
+    const html = list + adder;
+    detailCache[siteId] = { ...detailCache[siteId], social: html };
+    box.innerHTML = html;
   } catch (e) { box.innerHTML = '<div class="sub">Could not load links.</div>'; }
 }
 async function addSocial(siteId) {
@@ -903,6 +912,7 @@ async function removeSocial(id, siteId) {
 }
 
 // ---------- Per-site history ----------
+const histRange = {}; // siteId -> selected day range
 function relTime(iso) {
   const d = new Date(iso), s = (Date.now() - d.getTime()) / 1000;
   if (s < 60) return "just now";
@@ -911,35 +921,63 @@ function relTime(iso) {
   const days = Math.floor(s / 86400);
   return days < 30 ? days + "d ago" : d.toLocaleDateString();
 }
-function sparkline(vals) {
-  if (!vals || vals.length < 2) return "";
-  const W = 150, H = 34, pad = 3;
-  const step = (W - pad * 2) / (vals.length - 1);
-  const pts = vals.map((v, i) => `${(pad + i * step).toFixed(1)},${(pad + (1 - v / 100) * (H - pad * 2)).toFixed(1)}`).join(" ");
-  const last = vals[vals.length - 1];
-  const col = last >= 90 ? "var(--ok)" : last >= 50 ? "var(--warn)" : "var(--fail)";
-  return `<svg viewBox="0 0 ${W} ${H}" width="${W}" height="${H}"><polyline fill="none" stroke="${col}" stroke-width="1.6" stroke-linejoin="round" points="${pts}"/></svg>`;
+// Average down to at most `target` points so long ranges stay legible/fast.
+function downsample(vals, target) {
+  if (vals.length <= target) return vals;
+  const out = [], bucket = vals.length / target;
+  for (let i = 0; i < target; i++) {
+    const slice = vals.slice(Math.floor(i * bucket), Math.floor((i + 1) * bucket) || Math.floor(i * bucket) + 1);
+    out.push(slice.reduce((a, b) => a + b, 0) / slice.length);
+  }
+  return out;
 }
-async function loadHistory(siteId) {
+function lineChart(raw, opts) {
+  const vals = downsample(raw, 120);
+  if (vals.length < 2) return "";
+  const W = 260, H = 46, pad = 4;
+  let min = Math.min(...vals), max = Math.max(...vals);
+  if (opts.zeroBase) min = Math.min(min, 0);
+  if (min === max) { min -= 1; max += 1; }
+  const step = (W - pad * 2) / (vals.length - 1);
+  const pts = vals.map((v, i) => `${(pad + i * step).toFixed(1)},${(pad + (1 - (v - min) / (max - min)) * (H - pad * 2)).toFixed(1)}`).join(" ");
+  return `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" width="100%" height="${H}"><polyline fill="none" stroke="${opts.color || "var(--accent)"}" stroke-width="1.6" stroke-linejoin="round" stroke-linecap="round" points="${pts}"/></svg>`;
+}
+async function loadHistory(siteId, days) {
   const box = document.getElementById("hist-" + siteId);
   if (!box) return;
+  days = days || histRange[siteId] || 30;
+  histRange[siteId] = days;
+  box.innerHTML = '<div class="sub" style="font-size:12px;color:var(--muted)">Loading\u2026</div>';
   try {
-    const res = await fetch("/api/history/" + siteId + "?days=30");
+    const res = await fetch("/api/history/" + siteId + "?days=" + days);
     const j = await res.json();
     if (!j.ok) { box.innerHTML = '<div class="sub" style="font-size:12px;color:var(--muted)">Could not load history.</div>'; return; }
     const up = j.uptime == null ? "\u2014" : j.uptime + "%";
-    const events = (j.events || []).slice(0, 5);
+    const S = j.samples || [];
+    const ps = S.filter((s) => typeof s.pagespeed === "number").map((s) => s.pagespeed);
+    const rt = S.filter((s) => typeof s.responseMs === "number").map((s) => s.responseMs);
+    const ssl = S.filter((s) => typeof s.sslDays === "number").map((s) => s.sslDays);
+    const ranges = [7, 30, 90].map((d) => `<button class="hrange${days === d ? " on" : ""}" onclick="loadHistory('${siteId}',${d})">${d}d</button>`).join("");
+    const chart = (label, vals, opts) => vals.length > 1
+      ? `<div class="hchart"><div class="hchart-head"><span>${label}</span><span class="hchart-last">${opts.fmt(vals[vals.length - 1])}</span></div>${lineChart(vals, opts)}</div>` : "";
+    const psColor = ps.length ? (ps[ps.length - 1] >= 90 ? "var(--ok)" : ps[ps.length - 1] >= 50 ? "var(--warn)" : "var(--fail)") : "var(--accent)";
+    const charts =
+      chart("PageSpeed", ps, { color: psColor, fmt: (v) => Math.round(v) }) +
+      chart("Response time", rt, { color: "var(--accent)", zeroBase: true, fmt: (v) => Math.round(v) + "ms" }) +
+      chart("SSL days left", ssl, { color: "var(--info)", zeroBase: true, fmt: (v) => Math.round(v) + "d" });
+    const events = (j.events || []).slice(0, 8);
     const evHtml = events.length
       ? '<ul class="hist-list">' + events.map((e) => {
           const [c, t] = statusInfo(e.to);
           const from = e.from ? statusInfo(e.from)[1] : "New";
           return `<li><span class="dot ${c}"></span>${esc(from)} \u2192 ${esc(t)}<span class="hist-when">${relTime(e.at)}</span></li>`;
         }).join("") + "</ul>"
-      : '<div class="sub" style="font-size:12px;color:var(--muted)">No status changes recorded yet.</div>';
-    const psVals = (j.samples || []).filter((s) => typeof s.pagespeed === "number").map((s) => s.pagespeed);
-    const spark = sparkline(psVals);
-    const sparkHtml = spark ? `<div class="hist-spark"><span class="hist-spark-lbl">PageSpeed</span>${spark}<span class="hist-spark-lbl">${psVals[psVals.length - 1]}</span></div>` : "";
-    box.innerHTML = `<div class="hist-top"><span class="hist-up">${up}</span><span class="hist-up-lbl">uptime · last 30 days</span></div>${sparkHtml}${evHtml}`;
+      : '<div class="sub" style="font-size:12px;color:var(--muted)">No status changes recorded in this range.</div>';
+    box.innerHTML =
+      `<div class="hist-top"><span class="hist-up">${up}</span><span class="hist-up-lbl">uptime · ${days} days</span><div class="hranges">${ranges}</div></div>` +
+      `<div class="hcharts">${charts || '<div class="sub" style="font-size:12px;color:var(--muted)">Trends appear once a few samples have been collected.</div>'}</div>` +
+      evHtml;
+    detailCache[siteId] = { ...detailCache[siteId], hist: box.innerHTML };
   } catch (e) { box.innerHTML = '<div class="sub" style="font-size:12px;color:var(--muted)">Could not load history.</div>'; }
 }
 

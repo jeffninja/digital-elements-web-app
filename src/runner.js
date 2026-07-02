@@ -9,6 +9,7 @@ import { checkCtm, checkGoogleTag } from "./checks/scripts.js";
 import { checkPageSpeed } from "./checks/pagespeed.js";
 import { checkPlugins } from "./checks/plugins.js";
 import { checkClickUp } from "./checks/clickup.js";
+import { checkSecurity } from "./checks/security.js";
 
 // Worst status wins for the site-level roll-up. "skip"/"info" never lower a site
 // (open tasks are informational, not a site-health problem).
@@ -63,6 +64,7 @@ async function checkOneSite(site, settings) {
     pagespeed,
     plugins,
     clickup,
+    security: checkSecurity(fetchResult),
   };
 
   return {
@@ -110,6 +112,7 @@ async function checkOneLandingPage(lp, settings) {
     ctm: checkCtm(fetchResult, false),
     googleTag: checkGoogleTag(fetchResult, false),
     pagespeed,
+    security: checkSecurity(fetchResult),
   };
   return {
     id: lp.id, websiteId: lp.websiteId, name: lp.name || lp.url, url: lp.url,

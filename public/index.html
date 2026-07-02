@@ -91,7 +91,7 @@
 
   /* ---------- Status matrix ---------- */
   .matrix { background: var(--panel); border: 1px solid var(--line-soft); border-radius: var(--radius); overflow: hidden; }
-  .cols { grid-template-columns: minmax(190px, 1.6fr) repeat(8, minmax(60px, 1fr)) 132px; }
+  .cols { grid-template-columns: minmax(190px, 1.6fr) repeat(9, minmax(58px, 1fr)) 132px; }
   .mhead { display: grid; padding: 13px 18px; border-bottom: 1px solid var(--line-soft); font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.06em; text-transform: uppercase; color: var(--faint); }
   .site-block { border-bottom: 1px solid var(--line-soft); border-left: 3px solid transparent; }
   .site-block:last-child { border-bottom: 0; }
@@ -296,6 +296,17 @@
   .searchbar input { width: 100%; background: var(--panel); border: 1px solid var(--line-soft); border-radius: 11px; color: var(--text); padding: 11px 14px 11px 38px; font-size: 14px; font-family: inherit; }
   .searchbar input:focus { outline: none; border-color: var(--accent); }
   .searchbar input::placeholder { color: var(--faint); }
+  /* CTM numbers on page */
+  .ctm-phones { margin-top: 10px; display: flex; flex-wrap: wrap; align-items: center; gap: 6px; }
+  .ctm-phones-lbl { font-size: 10px; color: var(--faint); text-transform: uppercase; letter-spacing: 0.05em; font-family: var(--mono); width: 100%; margin-bottom: 3px; }
+  .phone-chip { display: inline-flex; align-items: center; gap: 6px; font-family: var(--mono); font-size: 12.5px; background: var(--panel-2); border: 1px solid var(--line-soft); border-radius: 8px; padding: 4px 10px; color: var(--text); }
+  .phone-chip svg { width: 13px; height: 13px; color: var(--accent); }
+  /* Security findings */
+  .sec-list { list-style: none; margin: 8px 0 0; padding: 0; }
+  .sec-list li { display: flex; align-items: flex-start; gap: 7px; font-size: 12px; line-height: 1.4; padding: 3px 0; color: var(--text); }
+  .sec-list .sec-dot { width: 7px; height: 7px; border-radius: 50%; margin-top: 4px; flex: 0 0 auto; }
+  .sec-list li.sev-high .sec-dot { background: var(--fail); }
+  .sec-list li.sev-med .sec-dot { background: var(--warn); }
 </style>
 </head>
 <body>
@@ -415,6 +426,7 @@
 const CHECKS = [
   ["https", "HTTPS"], ["ssl", "SSL"], ["cloudflare", "Cloudflare"], ["ctm", "CTM"],
   ["googleTag", "Google Tag"], ["pagespeed", "PageSpeed"], ["plugins", "Updates"], ["clickup", "Tasks"],
+  ["security", "Security"],
 ];
 const ROLE_LABELS = { admin: "Administrator", webdev: "Web Developer", seo: "SEO", publisher: "Publisher", social: "Social Media" };
 
@@ -534,6 +546,18 @@ function detailHtml(s) {
       if (c.meta.coreUpdate) extra += `<div class="sub">WordPress core \u2192 ${esc(c.meta.coreNewVersion || "update")}</div>`;
       if (u.length) extra += '<ul class="ulist">' + u.map((p) => `<li><span>${esc(p.name)}</span><span class="ver">${esc(p.current || "?")} \u2192 ${esc(p.new_version || "?")}</span></li>`).join("") + "</ul>";
       if (t.length) extra += '<ul class="ulist">' + t.map((p) => `<li><span>${esc(p.name)} (theme)</span><span class="ver">${esc(p.current || "?")} \u2192 ${esc(p.new_version || "?")}</span></li>`).join("") + "</ul>";
+    }
+    if (key === "ctm" && c.meta && c.meta.phones && c.meta.phones.length) {
+      extra += `<div class="ctm-phones"><span class="ctm-phones-lbl">Number${c.meta.phones.length > 1 ? "s" : ""} on page</span>${c.meta.phones.map((p) => `<span class="phone-chip">${ICON.phone}${esc(p)}</span>`).join("")}</div>`;
+    }
+    if (key === "security" && c.meta) {
+      const f = c.meta.findings || [];
+      if (f.length) {
+        extra += '<ul class="sec-list">' + f.map((x) => `<li class="sev-${x.sev}"><span class="sec-dot"></span>${esc(x.msg)}</li>`).join("") + "</ul>";
+      }
+      if (c.meta.missingHeaders && c.meta.missingHeaders.length) {
+        extra += `<div class="sub">Hardening: add ${esc(c.meta.missingHeaders.join(", "))}</div>`;
+      }
     }
     if (key === "pagespeed" && c.metrics) {
       const m = c.metrics;
@@ -1144,7 +1168,7 @@ const ICON = {
   gear: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="3.2"/><path d="M12 2.5v2M12 19.5v2M4.5 4.5l1.4 1.4M18.1 18.1l1.4 1.4M2.5 12h2M19.5 12h2M4.5 19.5l1.4-1.4M18.1 5.9l1.4-1.4"/></svg>',
   search: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><circle cx="11" cy="11" r="7"/><path d="M21 21l-4.3-4.3"/></svg>',
 };
-const CICON = { https: ICON.lock, ssl: ICON.shield, cloudflare: ICON.cloud, ctm: ICON.phone, googleTag: ICON.code, pagespeed: ICON.gauge, plugins: ICON.download, clickup: ICON.checkSquare };
+const CICON = { https: ICON.lock, ssl: ICON.shield, cloudflare: ICON.cloud, ctm: ICON.phone, googleTag: ICON.code, pagespeed: ICON.gauge, plugins: ICON.download, clickup: ICON.checkSquare, security: ICON.shieldCheck };
 
 // Swap icon placeholders in the nav/menu for real SVGs.
 function initIcons() {

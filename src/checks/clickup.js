@@ -156,6 +156,7 @@ function mapTask(t, now) {
     statusColor: t.status?.color || "#8a96ad",
     done: isDone,
     assignees: (t.assignees || []).map((a) => a.username || a.email || "").filter(Boolean),
+    assigneeEmails: (t.assignees || []).map((a) => (a.email || "").toLowerCase()).filter(Boolean),
     priority: t.priority?.priority || null,
     priorityColor: t.priority?.color || null,
     dueMs,

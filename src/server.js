@@ -80,6 +80,23 @@ app.get("/api/tasks/:siteId", requireAuth, async (req, res) => {
   }
 });
 
+// Open ClickUp tasks assigned to the signed-in user (matched by email), across all sites.
+app.get("/api/my-tasks", requireAuth, async (req, res) => {
+  const email = (req.user.email || "").toLowerCase();
+  try {
+    const sites = (await getWebsites()).filter((s) => s.clickup && s.clickup.enabled);
+    const perSite = await Promise.all(sites.map(async (s) => {
+      const r = await getClickUpTasks(s.clickup, settings.clickup);
+      if (!r.ok) return [];
+      return r.tasks
+        .filter((t) => !t.done && (t.assigneeEmails || []).includes(email))
+        .map((t) => ({ ...t, site: s.name, siteId: s.id }));
+    }));
+    const tasks = perSite.flat().sort((a, b) => (Number(b.overdue) - Number(a.overdue)) || ((a.dueMs || Infinity) - (b.dueMs || Infinity)));
+    res.json({ ok: true, email, tasks });
+  } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
+});
+
 // ---- Websites (view: all; add/edit: manageWebsites; delete: deleteWebsite) ----
 app.get("/api/websites", requireAuth, async (req, res) => {
   try {

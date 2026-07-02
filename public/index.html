@@ -42,7 +42,9 @@
   .nav a:hover { background: var(--panel-2); color: var(--text); }
   .nav a.active { background: color-mix(in srgb, var(--accent) 16%, transparent); color: #cfe1ff; }
   .nav a.active svg { color: var(--accent); opacity: 1; }
-  .nav .badge-count { margin-left: auto; background: var(--panel-2); color: var(--muted); font-family: var(--mono); font-size: 11px; padding: 1px 8px; border-radius: 20px; }
+  .nav .badge-count { margin-left: auto; background: var(--accent); color: #fff; font-family: var(--mono); font-size: 11px; font-weight: 600; padding: 1px 8px; border-radius: 20px; }
+  .bottomnav a { position: relative; }
+  .bn-badge { position: absolute; top: 0; right: 24%; background: var(--fail); color: #fff; font-family: var(--mono); font-size: 9px; font-weight: 600; min-width: 15px; height: 15px; line-height: 15px; text-align: center; border-radius: 8px; padding: 0 3px; }
   .side-foot { margin-top: auto; border-top: 1px solid var(--line-soft); padding-top: 14px; }
   .prof { display: flex; align-items: center; gap: 11px; padding: 4px 6px; }
   .avatar { width: 36px; height: 36px; border-radius: 10px; background: linear-gradient(135deg, #3b82f6, #6366f1); color: #fff; display: flex; align-items: center; justify-content: center; font-weight: 700; font-size: 13px; flex: none; }
@@ -284,6 +286,7 @@
       <a id="nav-dashboard" class="active" onclick="showView('dashboard')">__ICON_DASH__ Dashboard</a>
       <a id="nav-websites" onclick="showView('websites')">__ICON_GLOBE__ Websites</a>
       <a id="nav-landing" onclick="showView('landing')">__ICON_LAYERS__ Landing pages</a>
+      <a id="nav-mytasks" onclick="showView('mytasks')">__ICON_TASKS__ My tasks</a>
       <a id="nav-users" style="display:none" onclick="openUsers()">__ICON_USERS__ Users</a>
       <a id="nav-settings" style="display:none" onclick="showView('settings')">__ICON_GEAR__ Settings</a>
     </nav>
@@ -304,6 +307,7 @@
         <div class="last-run" id="lastRun">Loading…</div>
         <button class="btn primary" id="runBtn" onclick="runChecks()">__ICON_RUN__ Run checks</button>
         <button class="btn" id="addSiteBtn" style="display:none" onclick="openWebsiteModal()">__ICON_PLUS__ Website</button>
+        <button class="btn icononly" id="usersBtn" style="display:none" title="Users" onclick="openUsers()">__ICON_USERS__</button>
         <button class="btn icononly" id="settingsBtn" style="display:none" title="Settings" onclick="showView('settings')">__ICON_GEAR__</button>
         <div class="avatar mavatar" id="mAvatar" title="">–</div>
       </div>
@@ -331,6 +335,15 @@
           <button class="btn primary" id="addLandingBtn" style="display:none" onclick="openLandingModal()">__ICON_PLUS__ Landing page</button>
         </div>
         <div id="landingList"></div>
+      </section>
+
+      <section class="view" id="view-mytasks" hidden>
+        <div class="view-head">
+          <h2>My tasks</h2>
+          <button class="btn" onclick="renderMyTasks()">Refresh</button>
+        </div>
+        <div id="myTasksMeta" class="foot" style="text-align:left;margin:0 0 12px"></div>
+        <div id="myTasksList"></div>
       </section>
 
       <section class="view" id="view-settings" hidden>
@@ -364,7 +377,7 @@
     <a id="bn-dashboard" class="active" onclick="showView('dashboard')">__ICON_DASH__ Dashboard</a>
     <a id="bn-websites" onclick="showView('websites')">__ICON_GLOBE__ Websites</a>
     <a id="bn-landing" onclick="showView('landing')">__ICON_LAYERS__ Landing</a>
-    <a id="bn-users" style="display:none" onclick="openUsers()">__ICON_USERS__ Users</a>
+    <a id="bn-mytasks" onclick="showView('mytasks')">__ICON_TASKS__ Tasks</a>
     <a id="bn-signout" onclick="logout()">__ICON_OUT__ Sign out</a>
   </nav>
 </div>
@@ -520,9 +533,9 @@ function toggle(id) {
 // ---------- Views / navigation ----------
 function showView(name) {
   currentView = name;
-  const views = ["dashboard", "websites", "landing", "settings"];
+  const views = ["dashboard", "websites", "landing", "mytasks", "settings"];
   views.forEach((v) => { const el = document.getElementById("view-" + v); if (el) el.hidden = v !== name; });
-  const titles = { dashboard: "Dashboard", websites: "Websites", landing: "Landing pages", settings: "Settings" };
+  const titles = { dashboard: "Dashboard", websites: "Websites", landing: "Landing pages", mytasks: "My tasks", settings: "Settings" };
   document.getElementById("pageTitle").textContent = titles[name] || "Dashboard";
   views.forEach((v) => {
     const n = document.getElementById("nav-" + v); if (n) n.classList.toggle("active", v === name);
@@ -530,6 +543,7 @@ function showView(name) {
   });
   if (name === "websites") renderWebsitesList();
   if (name === "landing") refreshLanding().then(renderLanding);
+  if (name === "mytasks") renderMyTasks();
   if (name === "settings") renderSettings();
 }
 function renderWebsitesList() {
@@ -591,13 +605,15 @@ async function boot() {
   document.getElementById("mAvatar").textContent = init;
   document.getElementById("mAvatar").title = name;
   if (ME.perms.manageWebsites) { document.getElementById("addSiteBtn").style.display = "inline-flex"; document.getElementById("addSiteBtn2").style.display = "inline-flex"; document.getElementById("addLandingBtn").style.display = "inline-flex"; }
-  if (ME.perms.manageUsers) { document.getElementById("nav-users").style.display = "flex"; document.getElementById("bn-users").style.display = "flex"; }
+  if (ME.perms.manageUsers) { document.getElementById("nav-users").style.display = "flex"; document.getElementById("usersBtn").style.display = "inline-flex"; }
   if (ME.perms.manageSettings) { document.getElementById("nav-settings").style.display = "flex"; document.getElementById("settingsBtn").style.display = "inline-flex"; }
 
   await refreshWebsites();
   await refreshLanding();
   await load();
   startLive();
+  fetchMyTasksCount();
+  setInterval(fetchMyTasksCount, 300000); // refresh the badge every 5 minutes
 }
 async function logout() { await fetch("/auth/logout", { method: "POST" }); location.href = "/login"; }
 
@@ -624,6 +640,8 @@ function openWebsiteModal(site) {
     g("f-lickey").value = site.license.key || "(hidden \u2014 needs manage permission)";
     g("licStatus").innerHTML = licenseStatusHtml(site.license);
   }
+  g("modalSocialBlock").style.display = editing ? "block" : "none";
+  if (editing) loadModalSocial(site.id);
   g("siteModalErr").style.display = "none";
   g("siteModal").classList.add("show");
   document.body.style.overflow = "hidden";
@@ -844,6 +862,7 @@ async function removeUser(id, email) {
 }
 
 // ---------- Social links ----------
+// Renders social links into the expanded-site drawer.
 async function loadSocial(siteId) {
   const box = document.getElementById("social-" + siteId);
   if (!box) return;
@@ -870,6 +889,77 @@ async function removeSocial(id, siteId) {
   const res = await fetch("/api/social/" + id, { method: "DELETE" });
   const j = await res.json();
   if (j.ok) loadSocial(siteId); else alert(j.error || "Failed");
+}
+
+// Social links inside the Edit website modal (mirrors the drawer, kept in sync).
+async function loadModalSocial(siteId) {
+  const box = document.getElementById("modalSocialList");
+  if (!box) return;
+  try {
+    const res = await fetch("/api/websites/" + siteId + "/social");
+    const j = await res.json();
+    const links = (j.ok && j.links) || [];
+    const canEdit = !!ME.perms.editSocial;
+    const list = links.length
+      ? '<ul class="social-list">' + links.map((l) => `<li><a href="${esc(l.url)}" target="_blank" rel="noopener">${esc(l.platform)}</a>${canEdit ? `<button class="linkx" onclick="removeModalSocial('${l.id}','${siteId}')">remove</button>` : ""}</li>`).join("") + "</ul>"
+      : '<div class="sub" style="font-size:12px;color:var(--muted)">No social links yet.</div>';
+    const adder = canEdit ? `<div class="social-add"><input class="plat" id="msp-${siteId}" placeholder="Platform" /><input id="msu-${siteId}" placeholder="https://\u2026" /><button type="button" class="btn-primary" onclick="addModalSocial('${siteId}')">Add</button></div>` : "";
+    box.innerHTML = list + adder;
+  } catch (e) { box.innerHTML = '<div class="sub">Could not load links.</div>'; }
+}
+async function addModalSocial(siteId) {
+  const platform = document.getElementById("msp-" + siteId).value.trim();
+  const url = document.getElementById("msu-" + siteId).value.trim();
+  if (!platform || !url) return;
+  const res = await fetch("/api/websites/" + siteId + "/social", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ platform, url }) });
+  const j = await res.json();
+  if (!j.ok) { alert(j.error || "Failed"); return; }
+  loadModalSocial(siteId);
+  if (document.getElementById("social-" + siteId)) loadSocial(siteId); // keep drawer in sync
+}
+async function removeModalSocial(id, siteId) {
+  const res = await fetch("/api/social/" + id, { method: "DELETE" });
+  const j = await res.json();
+  if (!j.ok) { alert(j.error || "Failed"); return; }
+  loadModalSocial(siteId);
+  if (document.getElementById("social-" + siteId)) loadSocial(siteId);
+}
+
+// ---------- My tasks ----------
+function updateMyTasksBadge(n) {
+  const set = (id, txt, show) => { const el = document.getElementById(id); if (el) { el.textContent = txt; el.style.display = show ? "" : "none"; } };
+  set("mytasks-count", n, n > 0);
+  set("bn-mytasks-count", n > 99 ? "99+" : n, n > 0);
+}
+async function fetchMyTasksCount() {
+  try {
+    const res = await fetch("/api/my-tasks");
+    const j = await res.json();
+    if (j.ok) updateMyTasksBadge((j.tasks || []).length);
+  } catch (e) {}
+}
+async function renderMyTasks() {
+  const box = document.getElementById("myTasksList");
+  const meta = document.getElementById("myTasksMeta");
+  box.innerHTML = '<div class="empty" style="padding:40px">Loading your tasks\u2026</div>';
+  meta.textContent = "";
+  try {
+    const res = await fetch("/api/my-tasks");
+    const j = await res.json();
+    if (!j.ok) { box.innerHTML = '<div class="empty">' + esc(j.error || "Could not load tasks") + "</div>"; return; }
+    const tasks = j.tasks || [];
+    updateMyTasksBadge(tasks.length);
+    if (!tasks.length) { box.innerHTML = `<div class="empty"><h3>No open tasks</h3><p>Nothing in ClickUp is assigned to ${esc(j.email)} right now.</p></div>`; return; }
+    meta.textContent = `${tasks.length} open task${tasks.length > 1 ? "s" : ""} assigned to ${j.email}`;
+    const rows = tasks.map((t) => {
+      const badge = `<span class="badge" style="background:${esc(t.statusColor || "#5b6680")};color:#fff">${esc(t.status || "\u2014")}</span>`;
+      const name = t.url ? `<a href="${esc(t.url)}" target="_blank" rel="noopener">${esc(t.name)}</a>` : esc(t.name);
+      const due = `<span class="${t.overdue ? "due-late" : ""}">${fmtDue(t.dueMs)}</span>`;
+      const pri = t.priority ? `<span style="color:${esc(t.priorityColor || "#8a96ad")}">${esc(t.priority)}</span>` : "\u2014";
+      return `<tr><td class="tname">${name}</td><td>${esc(t.site)}</td><td>${esc(t.list)}</td><td>${badge}</td><td>${due}</td><td>${pri}</td></tr>`;
+    }).join("");
+    box.innerHTML = `<div class="matrix" style="padding:4px 6px"><table class="ttable"><thead><tr><th>Task</th><th>Site</th><th>List</th><th>Status</th><th>Due</th><th>Priority</th></tr></thead><tbody>${rows}</tbody></table></div>`;
+  } catch (e) { box.innerHTML = '<div class="empty">Could not reach the server.</div>'; }
 }
 
 // ---------- Task modal ----------
@@ -943,9 +1033,9 @@ const CICON = { https: ICON.lock, ssl: ICON.shield, cloudflare: ICON.cloud, ctm:
 // Swap icon placeholders in the nav/menu for real SVGs.
 function initIcons() {
   const map = {
-    "nav-dashboard": ICON.dash + " Dashboard", "nav-websites": ICON.globe + " Websites", "nav-landing": ICON.layers + " Landing pages", "nav-users": ICON.users + " Users", "nav-settings": ICON.gear + " Settings",
-    "bn-dashboard": ICON.dash + "Dashboard", "bn-websites": ICON.globe + "Websites", "bn-landing": ICON.layers + "Landing", "bn-users": ICON.users + "Users", "bn-signout": ICON.out + "Sign out",
-    "runBtn": ICON.run + " Run checks", "addSiteBtn": ICON.plus + " Website", "addSiteBtn2": ICON.plus + " Add website", "addLandingBtn": ICON.plus + " Landing page", "settingsBtn": ICON.gear,
+    "nav-dashboard": ICON.dash + " Dashboard", "nav-websites": ICON.globe + " Websites", "nav-landing": ICON.layers + " Landing pages", "nav-mytasks": ICON.checkSquare + " My tasks" + '<span class="badge-count" id="mytasks-count" style="display:none"></span>', "nav-users": ICON.users + " Users", "nav-settings": ICON.gear + " Settings",
+    "bn-dashboard": ICON.dash + "Dashboard", "bn-websites": ICON.globe + "Websites", "bn-landing": ICON.layers + "Landing", "bn-mytasks": ICON.checkSquare + '<span class="bn-badge" id="bn-mytasks-count" style="display:none"></span>' + "Tasks", "bn-signout": ICON.out + "Sign out",
+    "runBtn": ICON.run + " Run checks", "addSiteBtn": ICON.plus + " Website", "addSiteBtn2": ICON.plus + " Add website", "addLandingBtn": ICON.plus + " Landing page", "settingsBtn": ICON.gear, "usersBtn": ICON.users,
   };
   for (const id in map) { const el = document.getElementById(id); if (el) el.innerHTML = map[id]; }
   document.querySelectorAll(".signout").forEach((el) => { el.innerHTML = ICON.out + " Sign out"; });
@@ -1004,6 +1094,7 @@ boot();
       </div>
 
       <div class="field" style="margin-top:14px"><label>Helper endpoint (optional &mdash; auto-detected from the URL)</label><input type="text" id="f-hep" placeholder="Only needed if WordPress lives in a subfolder" /></div>
+      <div class="field" id="modalSocialBlock" style="display:none"><label>Social links</label><div id="modalSocialList"></div></div>
       <div id="siteModalErr" class="err" style="display:none;margin-top:12px"></div>
     </div>
     <div class="modal-actions"><button class="btn-ghost" onclick="closeWebsiteModal()">Cancel</button><button class="btn-primary" id="siteSaveBtn" onclick="saveWebsite()">Save</button></div>

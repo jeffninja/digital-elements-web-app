@@ -47,6 +47,25 @@ export function extractPhones(html) {
   return [...norm.values()].slice(0, 6);
 }
 
+// CTM account ID appears differently depending on how CTM was installed:
+// the standard embed (//123456.tctm.co/t.js), JSON/GTM-injected embeds where
+// slashes are escaped (\/\/123456.tctm.co), path-style loaders
+// (calltrackingmetrics.com/t/123456), data attributes, or an inline __ctm
+// config object. Try each, most specific first.
+function extractCtmAccount(html) {
+  const pats = [
+    /(\d{3,})\.tctm\.co/i,                                                // covers // and \/\/ forms
+    /calltrackingmetrics\.com\\?\/t\\?\/(\d{3,})/i,
+    /data-ctm-account=["'](\d{3,})/i,
+    /__ctm[\s\S]{0,200}?["']?account(?:_?id)?["']?\s*[:=]\s*["']?(\d{3,})/i,
+  ];
+  for (const re of pats) {
+    const m = html.match(re);
+    if (m) return m[1];
+  }
+  return null;
+}
+
 export function checkCtm(fetchResult, expected = true) {
   if (!fetchResult.ok) return { status: "warn", label: "Unknown", detail: "Site unreachable" };
 
@@ -55,13 +74,14 @@ export function checkCtm(fetchResult, expected = true) {
   const present =
     /\.tctm\.co/i.test(html) ||
     /calltrackingmetrics\.com/i.test(html) ||
-    /__ctm\b/i.test(html) ||
+    /__ctm/i.test(html) ||
+    /data-ctm-account/i.test(html) ||
     /\b_ctm\b/i.test(html);
 
   if (present) {
-    const idMatch = html.match(/\/\/(\d+)\.tctm\.co/i);
-    const detail = idMatch ? `Account ${idMatch[1]} · tctm.co` : "CTM script detected";
-    return { status: "ok", label: "Detected", detail, meta: { phones } };
+    const account = extractCtmAccount(html);
+    const detail = account ? `Account ${account} · tctm.co` : "CTM script detected";
+    return { status: "ok", label: "Detected", detail, meta: { phones, account } };
   }
 
   if (!expected) {

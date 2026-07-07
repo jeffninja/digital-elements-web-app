@@ -2,7 +2,7 @@
 /**
  * Plugin Name: Digital Elements Helper Plugin
  * Description: Connects this site to the Digital Elements Site Monitor. Adds an admin panel showing HTTPS, SSL, Cloudflare, CTM, Google Tag, PageSpeed, and update status, plus a secure, read-only endpoint the central dashboard reads. It cannot modify the site, access content, or run updates.
- * Version:     1.3
+ * Version:     1.4
  * Author:      Digital Elements Group
  * Author URI:  https://digitalelementsgroup.com/
  * Plugin URI:  https://digitalelementsgroup.com/
@@ -29,12 +29,18 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('DEHELED_VERSION', '1.3');
+define('DEHELED_VERSION', '1.4');
 define('DEHELED_CACHE_KEY', 'deheled_status_cache');
 define('DEHELED_PSI_OPTION', 'deheled_psi_key');
 define('DEHELED_LICENSE_OPTION', 'deheled_license_key');
 define('DEHELED_SEC_OPTION', 'deheled_security_result');
 define('DEHELED_SEC_CRON', 'deheled_security_scan_event');
+define('DEHELED_LIC_STATUS', 'deheled_license_status');
+// Central dashboard used to verify the license key. Override by defining
+// DEHELED_HUB_URL in wp-config.php if the dashboard ever moves.
+if (!defined('DEHELED_HUB_URL')) {
+    define('DEHELED_HUB_URL', 'https://digital-elements-web-app-production.up.railway.app');
+}
 
 /* =========================================================================
  * 1. REST endpoint for the central dashboard (kept lean: updates only)
@@ -349,22 +355,28 @@ function deheled_run_all_checks() {
 // Signature list. HIGH = strong backdoor/injection indicators. We deliberately
 // do NOT flag lone base64_decode()/eval() — legitimate plugins use them — only
 // the combinations and user-input sinks that malware actually uses.
+// NOTE: web-shell names are assembled via concatenation so this file never
+// contains them literally (otherwise the scanner would flag itself).
 function deheled_sec_patterns() {
+    $shells = implode('|', array(
+        'c99' . 'shell', 'r57' . 'shell', 'b37' . '4k', 'files' . 'man',
+        'wso' . 'shell', 'php' . 'spy', 'wee' . 'vely',
+    ));
     return array(
         'high' => array(
             '/eval\s*\(\s*(?:gzinflate|gzuncompress|str_rot13)?\s*\(?\s*base64_decode\s*\(/i' => 'eval() of a base64/gzip payload (backdoor)',
             '/\bpreg_replace\s*\(\s*([\'"])([^a-zA-Z0-9\s]).*?\2[imsxuADSUXJ]*e[imsxuADSUXJ]*\1/is' => 'preg_replace() with /e modifier (code execution)',
-            '/\b(?:c99shell|r57shell|b374k|filesman|wsoshell|phpspy|weevely)\b/i'             => 'Known web-shell signature',
+            '/\b(?:' . $shells . ')\b/i'                                                      => 'Known web-shell signature',
             '/\beval\s*\(\s*\$_(?:GET|POST|REQUEST|COOKIE|SERVER)/i'                          => 'eval() of user input (remote code execution)',
             '/\b(?:system|shell_exec|passthru|proc_open|popen)\s*\(\s*\$_(?:GET|POST|REQUEST|COOKIE)/i' => 'Shell command built from user input',
             '/\bassert\s*\(\s*\$_(?:GET|POST|REQUEST|COOKIE)/i'                               => 'assert() of user input (code execution)',
             '/\bmove_uploaded_file\s*\([^;]*\.php/i'                                          => 'Uploader writing a .php file',
         ),
         'med' => array(
-            '/\bgzinflate\s*\(\s*base64_decode\s*\(/i'          => 'gzinflate(base64_decode()) obfuscation',
-            '/\bstr_rot13\s*\(\s*base64_decode\s*\(/i'          => 'str_rot13(base64_decode()) obfuscation',
+            '/\bgzinflate\s*\(\s*base64_decode\s*\(/i'          => 'gzinflate + base64 obfuscation chain',
+            '/\bstr_rot13\s*\(\s*base64_decode\s*\(/i'          => 'str_rot13 + base64 obfuscation chain',
             '/\$\{\s*[\'"]\w+[\'"]\s*\}\s*\(/'                  => 'Dynamic variable-function call (obfuscation)',
-            '/\bcreate_function\s*\(/i'                          => 'create_function() (removed in PHP 8; used by malware)',
+            '/\bcreate_function\s*\(/i'                          => 'create_function usage (removed in PHP 8; common in malware)',
         ),
     );
 }
@@ -407,6 +419,21 @@ function deheled_sec_walk($dir, $cb, $start, $budget) {
     return false;
 }
 
+// Benign "guard" files: plugins (Yoast, WooCommerce, …) drop empty index.php
+// files into uploads subfolders to block directory listing. Only PHP open tag,
+// comments, whitespace, and at most a lone exit/die — no real code.
+function deheled_sec_is_guard_file($file) {
+    $size = @filesize($file);
+    if ($size === false || $size > 4096) return false;
+    $code = @file_get_contents($file);
+    if ($code === false) return false;
+    $stripped = preg_replace('/\/\*.*?\*\//s', '', $code);          // block comments
+    $stripped = preg_replace('/(?:\/\/|#)[^\r\n]*/', '', $stripped); // line comments
+    $stripped = preg_replace('/<\?(?:php)?|\?>/i', '', $stripped);   // php tags
+    $stripped = preg_replace('/\b(?:exit|die)\s*(?:\(\s*\))?\s*;?/i', '', $stripped);
+    return trim($stripped) === '';
+}
+
 function deheled_security_scan() {
     @set_time_limit(60);
     if (function_exists('wp_raise_memory_limit')) wp_raise_memory_limit('admin');
@@ -419,21 +446,35 @@ function deheled_security_scan() {
     $findings = array();
     $scanned = 0; $skippedBig = 0; $phpInUploads = 0; $partial = false;
 
-    // 1) PHP files inside uploads — should never exist.
+    // 1) PHP files inside uploads — should never exist (empty guard index.php
+    //    files that plugins create to block directory listing are exempt).
     $up  = wp_upload_dir();
     $upl = isset($up['basedir']) ? $up['basedir'] : WP_CONTENT_DIR . '/uploads';
-    $partial = deheled_sec_walk($upl, function ($file) use (&$findings, &$phpInUploads) {
+    $partial = deheled_sec_walk($upl, function ($file) use (&$findings, &$phpInUploads, $patterns, $maxBytes) {
         if ($phpInUploads >= 25) return;
+        if (deheled_sec_is_guard_file($file)) return;
         $phpInUploads++;
-        $findings[] = array('sev' => 'high', 'msg' => 'PHP file in uploads directory', 'file' => deheled_sec_rel($file));
+        $msg = 'PHP file in uploads directory';
+        $size = @filesize($file);
+        if ($size !== false && $size <= $maxBytes) {
+            $code = @file_get_contents($file);
+            if ($code !== false) {
+                $hit = deheled_sec_match($code, $patterns);
+                if ($hit) $msg .= ' (' . $hit['msg'] . ')';
+            }
+        }
+        $findings[] = array('sev' => 'high', 'msg' => $msg, 'file' => deheled_sec_rel($file));
     }, $start, $budget) || $partial;
 
     // 2) Obfuscated / injected code in themes, plugins and mu-plugins.
+    //    Our own plugin folder is skipped — it contains the signature list.
+    $own = wp_normalize_path(plugin_dir_path(__FILE__));
     $dirs = array(get_theme_root(), defined('WP_PLUGIN_DIR') ? WP_PLUGIN_DIR : WP_CONTENT_DIR . '/plugins');
     if (defined('WPMU_PLUGIN_DIR') && is_dir(WPMU_PLUGIN_DIR)) $dirs[] = WPMU_PLUGIN_DIR;
     foreach (array_unique($dirs) as $dir) {
-        $stop = deheled_sec_walk($dir, function ($file) use (&$findings, &$scanned, &$skippedBig, $patterns, $maxBytes) {
+        $stop = deheled_sec_walk($dir, function ($file) use (&$findings, &$scanned, &$skippedBig, $patterns, $maxBytes, $own) {
             if (count($findings) >= 80) return;
+            if ($own && strpos(wp_normalize_path($file), $own) === 0) return;
             $size = @filesize($file);
             if ($size === false) return;
             if ($size > $maxBytes) { $skippedBig++; return; }
@@ -516,12 +557,46 @@ add_action('admin_menu', function () {
     );
 });
 
+// Verify the license key against the Digital Elements dashboard. Stores the
+// result (valid/expired/site/expiry) so the panel can show real status.
+// Fail-soft: if the dashboard is unreachable we keep the last known status.
+function deheled_validate_license($key) {
+    $key = trim((string) $key);
+    if ($key === '') {
+        delete_option(DEHELED_LIC_STATUS);
+        return null;
+    }
+    $res = wp_remote_get(
+        DEHELED_HUB_URL . '/api/license/validate?key=' . rawurlencode($key),
+        array('timeout' => 8)
+    );
+    $status = array('checked_at' => time());
+    if (is_wp_error($res) || wp_remote_retrieve_response_code($res) !== 200) {
+        $prev = get_option(DEHELED_LIC_STATUS, array());
+        $status = is_array($prev) ? $prev : array();
+        $status['checked_at'] = isset($status['checked_at']) ? $status['checked_at'] : 0;
+        $status['unreachable'] = time();
+        update_option(DEHELED_LIC_STATUS, $status, false);
+        return $status;
+    }
+    $body = json_decode(wp_remote_retrieve_body($res), true);
+    $status['unreachable'] = 0;
+    $status['valid']      = !empty($body['valid']);
+    $status['expired']    = !empty($body['expired']);
+    $status['site']       = isset($body['site']) ? (string) $body['site'] : '';
+    $status['expires_at'] = isset($body['expiresAt']) ? (string) $body['expiresAt'] : '';
+    $status['days_left']  = isset($body['daysLeft']) ? $body['daysLeft'] : null;
+    update_option(DEHELED_LIC_STATUS, $status, false);
+    return $status;
+}
+
 // Save the monitoring license key from the client (nonce-protected).
 add_action('admin_post_deheled_save_license', function () {
     if (!current_user_can('manage_options')) wp_die('Forbidden');
     check_admin_referer('deheled_save_license');
     $key = isset($_POST['license_key']) ? sanitize_text_field(wp_unslash($_POST['license_key'])) : '';
     update_option(DEHELED_LICENSE_OPTION, $key);
+    deheled_validate_license($key);
     wp_safe_redirect(add_query_arg('saved', '1', admin_url('admin.php?page=deheled-monitor')));
     exit;
 });
@@ -577,16 +652,56 @@ function deheled_render_panel() {
         <div id="deheled-sec-body"></div>
       </div>
 
-      <?php $license_set = (bool) get_option(DEHELED_LICENSE_OPTION, ''); ?>
-      <div class="deheled-license <?php echo $license_set ? 'ok' : 'warn'; ?>">
-        <h2>Monitoring license <?php echo $license_set ? '· connected ✓' : '· not connected'; ?></h2>
-        <p class="description">Paste the license key from your Digital Elements dashboard. That's all this plugin needs — no <code>wp-config.php</code> changes.</p>
+      <?php
+        $license_key = get_option(DEHELED_LICENSE_OPTION, '');
+        $license_set = (bool) $license_key;
+        $lic = get_option(DEHELED_LIC_STATUS, null);
+        // Re-verify quietly if the last check is older than 12 hours.
+        if ($license_set && (!is_array($lic) || (time() - intval($lic['checked_at'] ?? 0)) > 12 * HOUR_IN_SECONDS)) {
+            $lic = deheled_validate_license($license_key);
+        }
+        $lic_valid   = is_array($lic) && !empty($lic['valid']);
+        $lic_expired = is_array($lic) && !empty($lic['expired']);
+        $lic_checked = is_array($lic) && intval($lic['checked_at'] ?? 0) > 0 && isset($lic['valid']);
+        $lic_unreach = is_array($lic) && !empty($lic['unreachable']) && !$lic_checked;
+        $box_class = $lic_valid ? 'ok' : ($license_set ? ($lic_checked ? 'bad' : 'warn') : 'warn');
+        $title = 'Monitoring license';
+        if ($lic_valid) $title .= ' · active ✓';
+        elseif ($lic_expired) $title .= ' · expired';
+        elseif ($license_set && $lic_checked) $title .= ' · not recognized';
+        elseif ($license_set) $title .= ' · saved (not verified)';
+        else $title .= ' · not connected';
+        $lock = $lic_valid; // lock the field once the dashboard confirms the key
+      ?>
+      <div class="deheled-license <?php echo esc_attr($box_class); ?>">
+        <h2><?php echo esc_html($title); ?></h2>
+        <?php if ($lic_valid): ?>
+          <p class="deheled-lic-status good">
+            &#10003; Verified with the Digital Elements dashboard
+            <?php if (!empty($lic['site'])): ?> &middot; linked to <strong><?php echo esc_html($lic['site']); ?></strong><?php endif; ?>
+            <?php if (!empty($lic['expires_at'])): ?> &middot; expires <?php echo esc_html(date_i18n('M j, Y', strtotime($lic['expires_at']))); ?><?php if (isset($lic['days_left']) && $lic['days_left'] !== null): ?> (<?php echo intval($lic['days_left']); ?> days left)<?php endif; ?>
+            <?php else: ?> &middot; no expiry<?php endif; ?>
+          </p>
+        <?php elseif ($lic_expired): ?>
+          <p class="deheled-lic-status bad">This license has expired<?php if (!empty($lic['expires_at'])): ?> on <?php echo esc_html(date_i18n('M j, Y', strtotime($lic['expires_at']))); ?><?php endif; ?>. Renew it from the Digital Elements dashboard, then save again.</p>
+        <?php elseif ($license_set && $lic_checked): ?>
+          <p class="deheled-lic-status bad">This key isn't recognized by the dashboard. Check for typos, or regenerate the key in the dashboard and paste the new one.</p>
+        <?php elseif ($license_set && $lic_unreach): ?>
+          <p class="deheled-lic-status dim">Couldn't reach the dashboard to verify — will retry automatically.</p>
+        <?php else: ?>
+          <p class="description">Paste the license key from your Digital Elements dashboard. That's all this plugin needs — no <code>wp-config.php</code> changes.</p>
+        <?php endif; ?>
         <form method="post" action="<?php echo esc_url(admin_url('admin-post.php')); ?>">
           <?php wp_nonce_field('deheled_save_license'); ?>
           <input type="hidden" name="action" value="deheled_save_license" />
-          <input type="text" name="license_key" class="regular-text code" placeholder="DEG-XXXXX-XXXXX-XXXXX-XXXXX"
-                 value="<?php echo esc_attr(get_option(DEHELED_LICENSE_OPTION, '')); ?>" />
-          <button class="button button-primary">Save license</button>
+          <input type="text" name="license_key" id="deheled-lic-input" class="regular-text code" placeholder="DEG-XXXXX-XXXXX-XXXXX-XXXXX"
+                 value="<?php echo esc_attr($license_key); ?>" <?php echo $lock ? 'readonly' : ''; ?> />
+          <?php if ($lock): ?>
+            <button type="button" class="button" id="deheled-lic-change">Change</button>
+            <button class="button button-primary" id="deheled-lic-save" style="display:none">Save license</button>
+          <?php else: ?>
+            <button class="button button-primary">Save license</button>
+          <?php endif; ?>
         </form>
       </div>
 
@@ -629,6 +744,12 @@ function deheled_render_panel() {
       .deheled-license { margin-top:24px; max-width:640px; background:#fff; border:1px solid #dcdcde; border-left-width:4px; border-radius:8px; padding:16px 18px; }
       .deheled-license.ok { border-left-color:#22c55e; }
       .deheled-license.warn { border-left-color:#f5b945; }
+      .deheled-license.bad { border-left-color:#ef4444; }
+      .deheled-lic-status { margin:4px 0 10px; font-size:13px; }
+      .deheled-lic-status.good { color:#137333; }
+      .deheled-lic-status.bad { color:#b91c1c; }
+      .deheled-lic-status.dim { color:#646970; }
+      #deheled-lic-input[readonly] { background:#f0f0f1; color:#50575e; }
       .deheled-license h2 { margin:0 0 4px; font-size:15px; }
       .deheled-license form { margin-top:10px; display:flex; gap:8px; flex-wrap:wrap; }
       .deheled-settings summary { cursor:pointer; color:#2271b1; }
@@ -718,6 +839,19 @@ function deheled_render_panel() {
       }
       secBtn.addEventListener("click", scan);
       renderSec(secData);
+
+      // ---- License field lock/unlock ----
+      var licChange = document.getElementById("deheled-lic-change");
+      if (licChange) {
+        licChange.addEventListener("click", function () {
+          var input = document.getElementById("deheled-lic-input");
+          input.removeAttribute("readonly");
+          input.focus();
+          input.select();
+          licChange.style.display = "none";
+          document.getElementById("deheled-lic-save").style.display = "";
+        });
+      }
     })();
     </script>
     <?php

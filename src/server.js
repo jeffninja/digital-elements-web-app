@@ -18,6 +18,7 @@ import {
   getLandingPages, createLandingPage, updateLandingPage, deleteLandingPage,
   getAppSettings, setAppSettings,
   getStatusEvents, getMetricSamples, computeUptime,
+  getWebsiteByLicense,
 } from "./db.js";
 import { configureAuth, requireAuth, requirePerm, sameOriginOnly, permsFor } from "./auth.js";
 
@@ -49,6 +50,22 @@ app.use(sameOriginOnly);           // block cross-origin mutations
 
 // ---- Public assets & login (no auth) ----
 app.get("/api/health", (req, res) => res.json({ ok: true }));
+
+// Public license check for the helper plugin (the key itself is the secret;
+// a valid GET returns only the site name + expiry, nothing else).
+app.get("/api/license/validate", async (req, res) => {
+  const key = String(req.query.key || "").trim();
+  if (!/^DEG-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}-[A-Z0-9]{5}$/i.test(key)) {
+    return res.json({ ok: true, valid: false });
+  }
+  try {
+    const lic = await getWebsiteByLicense(key);
+    if (!lic) return res.json({ ok: true, valid: false });
+    res.json({ ok: true, valid: !lic.expired, expired: lic.expired, site: lic.name, expiresAt: lic.expiresAt, daysLeft: lic.daysLeft });
+  } catch (err) {
+    res.status(500).json({ ok: false, error: "lookup failed" });
+  }
+});
 app.get("/login", (req, res) => res.sendFile(path.join(PUBLIC, "login.html")));
 app.get("/logo.png", (req, res) => res.sendFile(path.join(PUBLIC, "logo.png")));
 

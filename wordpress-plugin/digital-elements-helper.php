@@ -1,8 +1,8 @@
 <?php
 /**
  * Plugin Name: Digital Elements Helper Plugin
- * Description: Connects this site to the Digital Elements Site Monitor. Adds an admin panel showing HTTPS, SSL, Cloudflare, CTM, Google Tag, PageSpeed, and update status, plus a secure, read-only endpoint the central dashboard reads. It cannot modify the site, access content, or run updates.
- * Version:     1.4
+ * Description: Connects this site to the Digital Elements monitoring dashboard. Adds an admin panel showing HTTPS, SSL, Cloudflare, CTM, Google Tag, PageSpeed, and update status, plus a secure, read-only endpoint the central dashboard reads. It cannot modify the site, access content, or run updates.
+ * Version:     1.4.1
  * Author:      Digital Elements Group
  * Author URI:  https://digitalelementsgroup.com/
  * Plugin URI:  https://digitalelementsgroup.com/
@@ -12,7 +12,7 @@
  *
  * 1) In the Digital Elements dashboard, add this website. A unique license key
  *    is generated for it (format DEG-XXXXX-XXXXX-XXXXX-XXXXX).
- * 2) Install & activate this plugin, then go to WP Admin → Site Monitor and
+ * 2) Install & activate this plugin, then go to WP Admin → DE Monitoring and
  *    paste the license key into the "Monitoring license" field. That's it —
  *    no wp-config.php editing required.
  *
@@ -29,7 +29,7 @@ if (!defined('ABSPATH')) {
     exit;
 }
 
-define('DEHELED_VERSION', '1.4');
+define('DEHELED_VERSION', '1.4.1');
 define('DEHELED_CACHE_KEY', 'deheled_status_cache');
 define('DEHELED_PSI_OPTION', 'deheled_psi_key');
 define('DEHELED_LICENSE_OPTION', 'deheled_license_key');
@@ -87,7 +87,7 @@ function deheled_validate_token($provided) {
     if (!is_string($provided) || $provided === '') {
         return false;
     }
-    // Preferred: the license key entered in Site Monitor settings (no wp-config needed).
+    // Preferred: the license key entered in DE Monitoring settings (no wp-config needed).
     $license = get_option(DEHELED_LICENSE_OPTION, '');
     if (is_string($license) && $license !== '' && hash_equals((string) $license, $provided)) {
         return true;
@@ -540,21 +540,30 @@ function deheled_security_scan() {
  * ========================================================================= */
 
 function deheled_menu_icon() {
-    // Monochrome shield with a check; WordPress tints it for the admin menu.
+    // Company mark, served by the Digital Elements dashboard. Falls back to a
+    // monochrome shield if a custom hub URL without a logo is ever used.
+    if (defined('DEHELED_HUB_URL') && DEHELED_HUB_URL) {
+        return rtrim(DEHELED_HUB_URL, '/') . '/logo.png';
+    }
     $svg = '<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 20 20"><path d="M10 1l7 3v5c0 4.6-3 8.2-7 10-4-1.8-7-5.4-7-10V4l7-3zm-1 11.4l4.7-4.7-1.1-1.1L9 10.2 7.4 8.6 6.3 9.7 9 12.4z"/></svg>';
     return 'data:image/svg+xml;base64,' . base64_encode($svg);
 }
 
 add_action('admin_menu', function () {
     add_menu_page(
-        'Site Monitor',
-        'Site Monitor',
+        'DE Monitoring',
+        'DE Monitoring',
         'manage_options',
         'deheled-monitor',
         'deheled_render_panel',
         deheled_menu_icon(),
         58
     );
+});
+
+// Size the logo correctly in the admin sidebar.
+add_action('admin_head', function () {
+    echo '<style>#toplevel_page_deheled-monitor .wp-menu-image img{width:18px;height:18px;object-fit:contain;padding:7px 0 0;}</style>';
 });
 
 // Verify the license key against the Digital Elements dashboard. Stores the
@@ -631,10 +640,12 @@ function deheled_render_panel() {
     $key_set = (defined('WPMONITOR_PSI_KEY') && WPMONITOR_PSI_KEY) || get_option(DEHELED_PSI_OPTION, '');
     ?>
     <div class="wrap deheled">
-      <h1 class="deheled-title">Site Monitor
+      <h1 class="deheled-title">
+        <img class="deheled-logo" src="<?php echo esc_url(rtrim(DEHELED_HUB_URL, '/') . '/logo.png'); ?>" alt="Digital Elements" onerror="this.style.display='none'" />
+        <span>DE Monitoring</span>
         <button class="button button-primary" id="deheled-run">Run checks now</button>
       </h1>
-      <p class="deheled-sub">Health of <strong><?php echo esc_html(home_url()); ?></strong>.
+      <p class="deheled-sub">Digital Elements Group &middot; Health of <strong><?php echo esc_html(home_url()); ?></strong>.
         <span id="deheled-checked"><?php echo $cached ? 'Last checked ' . esc_html(date_i18n('M j, Y g:i a', strtotime($cached['checked_at']))) : 'No checks run yet.'; ?></span>
       </p>
 
@@ -724,6 +735,7 @@ function deheled_render_panel() {
 
     <style>
       .deheled-title { display:flex; align-items:center; gap:16px; }
+      .deheled-logo { height:36px; width:36px; object-fit:contain; border-radius:9px; background:#1d2327; padding:5px; box-sizing:border-box; }
       .deheled-sub { color:#646970; margin-top:-4px; }
       .deheled-grid { display:grid; grid-template-columns:repeat(auto-fill,minmax(240px,1fr)); gap:14px; margin-top:18px; }
       .deheled-card { background:#fff; border:1px solid #dcdcde; border-left-width:4px; border-radius:8px; padding:14px 16px; }

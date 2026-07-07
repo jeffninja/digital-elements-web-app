@@ -3,6 +3,7 @@
 // site and a matching token. See wordpress-plugin/wpmonitor-helper.php.
 
 const TIMEOUT_MS = 20000;
+const DEEP_TIMEOUT_MS = 25000; // first-ever scan may run inline on the site
 
 export async function checkPlugins(helper) {
   if (!helper || helper.enabled === false || !helper.endpoint) {
@@ -61,6 +62,40 @@ export async function checkPlugins(helper) {
       label: "Unreachable",
       detail: err.name === "AbortError" ? "Helper timed out" : err.message,
     };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+// Reads the helper plugin's deep server-side scan (/security). The plugin runs
+// the heavy scan on a daily cron and caches it, so this call is normally instant.
+// Returns null when there's no helper, or { ok, findings, ... } / { ok:false }.
+export async function getDeepSecurity(helper) {
+  if (!helper || helper.enabled === false || !helper.endpoint) return null;
+  const url = helper.endpoint.replace(/\/status\/?$/, "/security");
+  const controller = new AbortController();
+  const timer = setTimeout(() => controller.abort(), DEEP_TIMEOUT_MS);
+  try {
+    const res = await fetch(url, {
+      signal: controller.signal,
+      headers: {
+        Authorization: `Bearer ${helper.token || ""}`,
+        "X-WPMonitor-Token": helper.token || "",
+        Accept: "application/json",
+      },
+    });
+    if (res.status === 404) return { ok: false, reason: "unsupported" }; // older plugin (<1.3)
+    if (!res.ok) return { ok: false, reason: `HTTP ${res.status}` };
+    const data = await res.json();
+    return {
+      ok: true,
+      scannedAt: data.scanned_at || null,
+      filesScanned: data.files_scanned || 0,
+      partial: !!data.partial,
+      findings: Array.isArray(data.findings) ? data.findings : [],
+    };
+  } catch (err) {
+    return { ok: false, reason: err.name === "AbortError" ? "timeout" : err.message };
   } finally {
     clearTimeout(timer);
   }

@@ -7,9 +7,9 @@ import { checkSsl } from "./checks/ssl.js";
 import { checkCloudflare } from "./checks/cloudflare.js";
 import { checkCtm, checkGoogleTag } from "./checks/scripts.js";
 import { checkPageSpeed } from "./checks/pagespeed.js";
-import { checkPlugins } from "./checks/plugins.js";
+import { checkPlugins, getDeepSecurity } from "./checks/plugins.js";
 import { checkClickUp } from "./checks/clickup.js";
-import { checkSecurity } from "./checks/security.js";
+import { checkSecurity, mergeDeepSecurity } from "./checks/security.js";
 
 // Worst status wins for the site-level roll-up. "skip"/"info" never lower a site
 // (open tasks are informational, not a site-health problem).
@@ -47,13 +47,20 @@ async function checkOneSite(site, settings) {
   const pluginsPromise = licenseExpired
     ? Promise.resolve({ status: "warn", label: "License expired", detail: "Renew this site's monitoring license to resume update checks." })
     : checkPlugins(site.helper);
+  const deepPromise = (site.helper && site.helper.enabled && !licenseExpired)
+    ? getDeepSecurity(site.helper).catch(() => null)
+    : Promise.resolve(null);
 
-  const [ssl, pagespeed, plugins, clickup] = await Promise.all([
+  const [ssl, pagespeed, plugins, clickup, deep] = await Promise.all([
     checkSsl(site.url, settings.sslWarnDays),
     getPageSpeedCached(fetchResult.finalUrl || site.url, settings),
     pluginsPromise,
     checkClickUp(site.clickup, settings.clickup),
+    deepPromise,
   ]);
+
+  const security = checkSecurity(fetchResult);
+  if (deep) mergeDeepSecurity(security, deep);
 
   const checks = {
     https: checkHttps(fetchResult),
@@ -64,7 +71,7 @@ async function checkOneSite(site, settings) {
     pagespeed,
     plugins,
     clickup,
-    security: checkSecurity(fetchResult),
+    security,
   };
 
   return {

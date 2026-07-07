@@ -555,6 +555,11 @@ function detailHtml(s) {
       if (f.length) {
         extra += '<ul class="sec-list">' + f.map((x) => `<li class="sev-${x.sev}"><span class="sec-dot"></span>${esc(x.msg)}</li>`).join("") + "</ul>";
       }
+      if (c.meta.deepScannedAt) {
+        extra += `<div class="sub">Deep scan: ${c.meta.filesScanned || 0} files server-side${c.meta.deepPartial ? " (partial — rescan for full coverage)" : ""}</div>`;
+      } else if (c.meta.deepUnavailable) {
+        extra += `<div class="sub">Deep file scan unavailable — update the helper plugin to v1.3.</div>`;
+      }
       if (c.meta.missingHeaders && c.meta.missingHeaders.length) {
         extra += `<div class="sub">Hardening: add ${esc(c.meta.missingHeaders.join(", "))}</div>`;
       }

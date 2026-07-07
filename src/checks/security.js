@@ -92,3 +92,30 @@ export function checkSecurity(fetchResult) {
 
   return { status, label, detail, meta: { findings, missingHeaders: missing } };
 }
+
+// Folds the helper plugin's server-side deep-scan findings into the passive
+// result, elevating status to match. Called only for plugin-enabled sites.
+export function mergeDeepSecurity(security, deep) {
+  security.meta = security.meta || {};
+  if (!deep) return security;
+  if (deep.ok === false) {
+    if (deep.reason === "unsupported") security.meta.deepUnavailable = true;
+    return security;
+  }
+  security.meta.deepScannedAt = deep.scannedAt;
+  security.meta.filesScanned = deep.filesScanned;
+  security.meta.deepPartial = deep.partial;
+  const df = (deep.findings || []).map((f) => ({
+    sev: f.sev === "high" ? "high" : "med",
+    msg: f.file ? `${f.msg} — ${f.file}` : f.msg,
+    deep: true,
+  }));
+  const findings = [...(security.meta.findings || []), ...df];
+  security.meta.findings = findings;
+  const high = findings.filter((f) => f.sev === "high");
+  const med = findings.filter((f) => f.sev === "med");
+  if (high.length) { security.status = "fail"; security.label = "Threats found"; security.detail = high[0].msg; }
+  else if (med.length) { security.status = "warn"; security.label = "Suspicious"; security.detail = med[0].msg; }
+  else if (deep.filesScanned) { security.detail = `No threats · ${deep.filesScanned} files scanned server-side`; }
+  return security;
+}

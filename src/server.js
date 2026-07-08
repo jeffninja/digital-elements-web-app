@@ -62,7 +62,11 @@ app.get("/api/license/validate", async (req, res) => {
   try {
     const lic = await getWebsiteByLicense(key);
     if (!lic) return res.json({ ok: true, valid: false });
-    res.json({ ok: true, valid: !lic.expired, expired: lic.expired, site: lic.name, expiresAt: lic.expiresAt, daysLeft: lic.daysLeft });
+    res.json({
+      ok: true, valid: !lic.expired, expired: lic.expired, site: lic.name, expiresAt: lic.expiresAt, daysLeft: lic.daysLeft,
+      // Endpoint the helper plugin's page-view beacon posts to (see analytics-worker/).
+      analyticsUrl: (process.env.ANALYTICS_URL || "").replace(/\/$/, "") || null,
+    });
   } catch (err) {
     res.status(500).json({ ok: false, error: "lookup failed" });
   }
@@ -187,6 +191,25 @@ app.get("/api/history/:siteId", requireAuth, async (req, res) => {
     ]);
     res.json({ ok: true, days, uptime, events, samples });
   } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
+});
+
+// Per-site page-view analytics, proxied to the Cloudflare Worker so the
+// stats key never reaches the browser (see analytics-worker/ for the Worker).
+app.get("/api/analytics/:siteId", requireAuth, async (req, res) => {
+  const base = (process.env.ANALYTICS_URL || "").replace(/\/$/, "");
+  const key = process.env.ANALYTICS_STATS_KEY || "";
+  if (!base || !key) return res.json({ ok: false, error: "Analytics not configured — set ANALYTICS_URL and ANALYTICS_STATS_KEY in .env" });
+  const days = clamp(req.query.days || 7, 1, 90);
+  try {
+    const site = await getWebsiteSite(req.params.siteId);
+    if (!site) return res.status(404).json({ ok: false, error: "Unknown site" });
+    const host = new URL(site.url).hostname.replace(/^www\./, "");
+    const r = await fetch(`${base}/stats?site=${encodeURIComponent(host)}&days=${days}`, {
+      headers: { Authorization: `Bearer ${key}` },
+      signal: AbortSignal.timeout(8000),
+    });
+    res.status(r.status).json(await r.json());
+  } catch (err) { res.status(502).json({ ok: false, error: "Analytics service unreachable: " + err.message }); }
 });
 
 // ---- Websites (view: all; add/edit: manageWebsites; delete: deleteWebsite) ----

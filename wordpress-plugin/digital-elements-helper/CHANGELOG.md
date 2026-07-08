@@ -1,5 +1,15 @@
 # Changelog — Digital Elements Helper Plugin
 
+## 2.1.0
+- New: lightweight page-view analytics. A tiny (<400 byte) inline beacon fires
+  after each front-end page finishes loading (navigator.sendBeacon — zero
+  impact on site speed; no cookies, no external scripts, no PII stored).
+  Powers "Most visited pages" and "Real-time views" in the dashboard.
+- The analytics endpoint is configured automatically via license validation —
+  nothing to set up on the site. Opt out with
+  `add_filter('deheled_analytics_enabled', '__return_false');`
+- Logged-in users, previews and feeds are never tracked.
+
 ## 2.0.1
 - Show the running plugin version on the DE Monitoring panel.
 - First release delivered through the built-in updater (test release).

@@ -289,6 +289,21 @@
   .hist-list li { display: flex; align-items: center; gap: 8px; font-size: 12.5px; padding: 5px 0; border-top: 1px solid var(--line-soft); }
   .hist-list li:first-child { border-top: 0; }
   .hist-when { margin-left: auto; color: var(--muted); font-size: 11px; }
+  /* Analytics panel */
+  .ana-top { row-gap: 10px; flex-wrap: wrap; }
+  .ana-live { display: inline-flex; align-items: center; gap: 8px; }
+  .ana-live .pulse { width: 9px; height: 9px; border-radius: 50%; background: var(--ok); animation: anapulse 1.8s ease-out infinite; }
+  @keyframes anapulse { 0% { box-shadow: 0 0 0 0 color-mix(in srgb, var(--ok) 50%, transparent); } 70% { box-shadow: 0 0 0 8px transparent; } 100% { box-shadow: 0 0 0 0 transparent; } }
+  .ana-n { font-family: var(--display); font-weight: 700; font-size: 20px; }
+  .ana-lbl { color: var(--muted); font-size: 11.5px; }
+  .ana-cols { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-top: 12px; }
+  .ana-h { margin: 0 0 6px; font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.05em; text-transform: uppercase; color: var(--faint); }
+  .tp-list { list-style: none; margin: 0; padding: 0; }
+  .tp-list li { position: relative; display: flex; justify-content: space-between; gap: 10px; font-size: 12px; padding: 5px 8px; border-radius: 6px; overflow: hidden; }
+  .tp-bar { position: absolute; left: 0; top: 0; bottom: 0; background: color-mix(in srgb, var(--accent) 14%, transparent); border-radius: 6px; }
+  .tp-path { position: relative; font-family: var(--mono); font-size: 11.5px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+  .tp-views { position: relative; color: var(--muted); font-family: var(--mono); font-size: 11px; white-space: nowrap; }
+  @media (max-width: 900px) { .ana-cols { grid-template-columns: 1fr; } }
   /* Search bar */
   .searchbar { position: relative; margin: 0 0 14px; }
   .searchbar .search-ic { position: absolute; left: 13px; top: 50%; transform: translateY(-50%); color: var(--faint); display: flex; }
@@ -587,11 +602,11 @@ function detailFoot(s) {
   if (ME.perms.deleteWebsite) btns += `<button class="btn sm danger" onclick="event.stopPropagation(); deleteWebsite('${s.id}', '${esc((s.name || "").replace(/'/g, ""))}')">Delete site</button>`;
   const actions = btns ? `<div class="site-actions">${btns}</div>` : "";
   const cache = detailCache[s.id] || {};
-  return `<div class="detail-foot">${actions}<div class="social-box"><h4>Social links</h4><div id="social-${s.id}">${cache.social || "\u2026"}</div></div><div class="social-box" style="margin-top:16px"><h4>History (30 days)</h4><div id="hist-${s.id}">${cache.hist || "\u2026"}</div></div></div>`;
+  return `<div class="detail-foot">${actions}<div class="social-box"><h4>Analytics</h4><div id="ana-${s.id}">${cache.ana || "\u2026"}</div></div><div class="social-box" style="margin-top:16px"><h4>Social links</h4><div id="social-${s.id}">${cache.social || "\u2026"}</div></div><div class="social-box" style="margin-top:16px"><h4>History (30 days)</h4><div id="hist-${s.id}">${cache.hist || "\u2026"}</div></div></div>`;
 }
 function toggle(id) {
   if (openRows.has(id)) openRows.delete(id);
-  else { openRows.add(id); loadSocial(id); loadHistory(id); }
+  else { openRows.add(id); loadSocial(id); loadHistory(id); loadAnalytics(id); }
   const row = document.getElementById("row-" + id);
   if (row) row.classList.toggle("open");
 }
@@ -1034,6 +1049,56 @@ async function loadHistory(siteId, days) {
     detailCache[siteId] = { ...detailCache[siteId], hist: box.innerHTML };
   } catch (e) { box.innerHTML = '<div class="sub" style="font-size:12px;color:var(--muted)">Could not load history.</div>'; }
 }
+
+// ---------- Per-site analytics (most visited pages + real-time views) ----------
+// Data comes from /api/analytics/:siteId, which proxies the de-analytics
+// Cloudflare Worker. The realtime numbers auto-refresh while a row is open.
+const anaRange = {}; // siteId -> selected day range
+async function loadAnalytics(siteId, days, quiet) {
+  const box = document.getElementById("ana-" + siteId);
+  if (!box) return;
+  days = days || anaRange[siteId] || 7;
+  anaRange[siteId] = days;
+  if (!quiet) box.innerHTML = '<div class="sub" style="font-size:12px;color:var(--muted)">Loading…</div>';
+  const fail = (msg) => {
+    const html = '<div class="sub" style="font-size:12px;color:var(--muted)">' + esc(msg) + "</div>";
+    box.innerHTML = html;
+    detailCache[siteId] = { ...detailCache[siteId], ana: html };
+  };
+  try {
+    const res = await fetch("/api/analytics/" + siteId + "?days=" + days);
+    const j = await res.json();
+    if (!j.ok) return fail(j.error || "Could not load analytics.");
+    const rt = j.realtime || {};
+    const t24 = j.last24h || {};
+    const ranges = [7, 30, 90].map((d) => `<button class="hrange${days === d ? " on" : ""}" onclick="loadAnalytics('${siteId}',${d})">${d}d</button>`).join("");
+    const barList = (rows, label, val) => rows.length
+      ? '<ul class="tp-list">' + rows.map((r) => {
+          const max = rows[0][val] || 1;
+          const w = Math.max(3, Math.round((r[val] / max) * 100));
+          const extra = r.visitors != null ? ` · ${r.visitors} visitor${r.visitors === 1 ? "" : "s"}` : "";
+          return `<li><span class="tp-bar" style="width:${w}%"></span><span class="tp-path" title="${esc(label(r))}">${esc(label(r))}</span><span class="tp-views">${r[val]}${extra}</span></li>`;
+        }).join("") + "</ul>"
+      : '<div class="sub" style="font-size:12px;color:var(--muted)">Nothing recorded yet.</div>';
+    const dv = (j.daily || []).map((d) => d.views);
+    const spark = dv.length > 1 ? `<div class="hchart" style="margin-top:12px"><div class="hchart-head"><span>Daily views</span><span class="hchart-last">${dv[dv.length - 1]}</span></div>${lineChart(dv, { color: "var(--accent)", zeroBase: true })}</div>` : "";
+    box.innerHTML =
+      `<div class="hist-top ana-top">` +
+        `<span class="ana-live"><span class="pulse"></span><span class="ana-n">${rt.activeVisitors || 0}</span><span class="ana-lbl">on site now</span></span>` +
+        `<span><span class="ana-n">${t24.views || 0}</span> <span class="ana-lbl">views · 24 h</span></span>` +
+        `<span><span class="ana-n">${t24.visitors || 0}</span> <span class="ana-lbl">visitors · 24 h</span></span>` +
+        `<div class="hranges">${ranges}</div></div>` +
+      spark +
+      `<div class="ana-cols"><div><h5 class="ana-h">Most visited pages · ${days}d</h5>${barList(j.topPages || [], (r) => r.path, "views")}</div>` +
+      `<div><h5 class="ana-h">Top referrers · ${days}d</h5>${barList(j.topReferrers || [], (r) => r.ref, "views")}</div></div>`;
+    detailCache[siteId] = { ...detailCache[siteId], ana: box.innerHTML };
+  } catch (e) { fail("Could not load analytics."); }
+}
+// Keep "on site now" fresh for any open rows.
+setInterval(() => {
+  if (currentView !== "dashboard" || document.hidden) return;
+  openRows.forEach((id) => loadAnalytics(id, undefined, true));
+}, 30000);
 
 // Social links inside the Edit website modal (mirrors the drawer, kept in sync).
 async function loadModalSocial(siteId) {

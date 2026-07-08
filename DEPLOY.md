@@ -149,6 +149,39 @@ name, URL, ClickUp List IDs (comma-separated — find them with
 `node src/list-spaces.js`), the check expectations, and optional helper endpoint +
 token. Edit and Delete live in each site's expanded detail panel.
 
+## Page-view analytics (optional — "Most visited pages" + "Real-time views")
+
+Analytics data is collected by a tiny Cloudflare Worker (`analytics-worker/`)
+backed by a D1 database, completely separate from the sites and the dashboard
+so it can never slow either down. The D1 database (`de-analytics`) already
+exists on the Cloudflare account; one-time setup:
+
+```bash
+cd analytics-worker
+npx wrangler login                    # jeff@digitalelementsgroup.com account
+npx wrangler deploy                   # prints the Worker URL — copy it
+openssl rand -hex 24                  # generate the stats key — copy it
+npx wrangler secret put STATS_KEY     # paste the key when prompted
+```
+
+Then add two variables to the dashboard's environment (Railway → Variables):
+
+```
+ANALYTICS_URL=https://de-analytics.<your-subdomain>.workers.dev   # from deploy
+ANALYTICS_STATS_KEY=<the same key>
+```
+
+That's it. Each site's helper plugin (v2.1.0+) picks up the endpoint
+automatically the next time it validates its license (at most 24 h), and starts
+sending a ~300-byte `sendBeacon` after each page finishes loading — no cookies,
+no external JS, no render-blocking, no PII stored. An **Analytics** section
+(live visitors, 24 h views, most visited pages, top referrers) appears in each
+site's expanded panel on the dashboard.
+
+Data older than 180 days is pruned automatically (change `RETENTION_DAYS` in
+`analytics-worker/wrangler.toml`). Cloudflare's free tier comfortably covers
+millions of page views per month.
+
 ## Notes & limits
 
 - **Cost:** Supabase and Railway both have free tiers to start; Railway's free

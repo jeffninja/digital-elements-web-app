@@ -1,0 +1,21 @@
+# Digital Elements Analytics Worker
+# Deploy:  npx wrangler deploy          (from this folder)
+# Secret:  npx wrangler secret put STATS_KEY
+#          (use the same value as ANALYTICS_STATS_KEY in the dashboard's .env)
+
+name = "de-analytics"
+main = "worker.js"
+compatibility_date = "2026-07-01"
+account_id = "26a9e244af3361b7e64cecca516e4f0d"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "de-analytics"
+database_id = "26f8e5d3-01c3-432a-944f-7c555276fa69"
+
+# Prune page views older than RETENTION_DAYS once a day.
+[triggers]
+crons = ["30 4 * * *"]
+
+[vars]
+RETENTION_DAYS = "180"

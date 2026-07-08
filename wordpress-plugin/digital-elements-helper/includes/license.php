@@ -28,6 +28,8 @@ function deheled_validate_license($key) {
     $status['site']       = isset($body['site']) ? (string) $body['site'] : '';
     $status['expires_at'] = isset($body['expiresAt']) ? (string) $body['expiresAt'] : '';
     $status['days_left']  = isset($body['daysLeft']) ? $body['daysLeft'] : null;
+    // Analytics endpoint is centrally managed by the dashboard (see analytics.php).
+    $status['analytics_url'] = isset($body['analyticsUrl']) ? (string) $body['analyticsUrl'] : '';
     update_option(DEHELED_LIC_STATUS, $status, false);
     return $status;
 }

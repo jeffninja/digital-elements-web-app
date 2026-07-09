@@ -68,8 +68,9 @@ add_action('admin_post_deheled_save_llms', function () {
  * llms.txt format (title, blockquote summary, sectioned link lists).
  */
 function deheled_llms_starter_template() {
-    $name = get_bloginfo('name');
-    $desc = get_bloginfo('description');
+    // Decode entities: bloginfo is HTML-escaped ("&amp;"), but llms.txt is plain text.
+    $name = wp_specialchars_decode(get_bloginfo('name'), ENT_QUOTES);
+    $desc = wp_specialchars_decode(get_bloginfo('description'), ENT_QUOTES);
     $out  = '# ' . $name . "\n\n";
     $out .= '> ' . ($desc !== '' ? $desc : 'Describe what this site/organization does in two or three sentences, including location and contact details if relevant.') . "\n\n";
     $out .= "This file helps AI models and LLM-based assistants accurately understand, summarize, and cite this site's content.\n\n";

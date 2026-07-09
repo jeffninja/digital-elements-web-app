@@ -1,5 +1,11 @@
 # Changelog — Digital Elements Helper Plugin
 
+## 2.2.1
+- Fix: llms.txt starter template no longer shows HTML entities (e.g. "&amp;amp;")
+  in the site title/tagline — decoded to plain text.
+- "Check again" on Dashboard → Updates now bypasses the plugin's 6-hour update
+  cache so new releases appear immediately.
+
 ## 2.2.0
 - New: editable llms.txt. A new "llms.txt" page under DE Monitoring lets you
   write and publish an llms.txt file (https://llmstxt.org/) that helps AI

@@ -80,3 +80,9 @@ add_filter('plugins_api', function ($result, $action, $args) {
 add_action('upgrader_process_complete', function () {
     delete_site_transient('deheled_update_manifest');
 });
+
+// Dashboard → Updates → "Check again" should bypass our 6-hour manifest cache
+// too, so a freshly released version shows up immediately when forced.
+add_action('load-update-core.php', function () {
+    if (isset($_GET['force-check'])) delete_site_transient('deheled_update_manifest');
+});

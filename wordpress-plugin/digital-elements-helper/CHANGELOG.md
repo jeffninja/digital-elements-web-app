@@ -1,5 +1,13 @@
 # Changelog — Digital Elements Helper Plugin
 
+## 2.3.0
+- New: website optimization actions triggered from the Digital Elements
+  dashboard. Phase 1 adds "Clear cache" — a token-authenticated endpoint that
+  flushes the object cache, expired cache transients, and any active caching
+  plugin (WP Rocket, W3 Total Cache, WP Super Cache, LiteSpeed, Cloudflare,
+  Autoptimize, SiteGround) and reports exactly what was cleared. Only clears
+  regenerable caches; never touches content, settings, or files.
+
 ## 2.2.2
 - llms.txt is now written as a PHYSICAL file in the WordPress root (next to
   robots.txt) when enabled, and removed when disabled. Required on hosts like

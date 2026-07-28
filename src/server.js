@@ -274,6 +274,47 @@ app.post("/api/task-comment/:siteId/:source/:taskId", requireAuth, async (req, r
   } catch (err) { res.status(500).json({ ok: false, error: err.message }); }
 });
 
+// ---- Website optimization actions (admin + web developer) ----
+// Each action proxies to the site's helper plugin, which does the real work on
+// WordPress. Phase 1: clear-cache. Guarded by manageWebsites + a valid license.
+const OPTIMIZE_ACTIONS = { "clear-cache": "optimize/clear-cache" };
+
+app.post("/api/optimize/:siteId/:action", requireAuth, requirePerm("manageWebsites"), async (req, res) => {
+  const action = req.params.action;
+  const path = OPTIMIZE_ACTIONS[action];
+  if (!path) return res.status(400).json({ ok: false, error: "Unknown optimization" });
+  try {
+    const site = await getWebsiteSite(req.params.siteId);
+    if (!site) return res.status(404).json({ ok: false, error: "Unknown site" });
+    if (!site.helper || !site.helper.enabled || !site.helper.endpoint) {
+      return res.status(400).json({ ok: false, error: "Helper plugin isn't set up for this site" });
+    }
+    if (site.license && site.license.expired) {
+      return res.status(400).json({ ok: false, error: "This site's monitoring license has expired" });
+    }
+    // helper.endpoint is the .../wpmonitor/v1/status URL — swap the trailing segment.
+    const base = site.helper.endpoint.replace(/\/status\/?$/, "");
+    const url = `${base}/${path}`;
+    const r = await fetch(url, {
+      method: "POST",
+      headers: {
+        Authorization: `Bearer ${site.helper.token || ""}`,
+        "X-WPMonitor-Token": site.helper.token || "",
+        Accept: "application/json",
+      },
+      signal: AbortSignal.timeout(30000),
+    });
+    if (r.status === 404) return res.status(400).json({ ok: false, error: "Update the helper plugin to v2.3+ to use optimizations" });
+    if (r.status === 401 || r.status === 403) return res.status(400).json({ ok: false, error: "Token rejected by the helper plugin" });
+    if (!r.ok) return res.status(502).json({ ok: false, error: `Helper returned HTTP ${r.status}` });
+    const data = await r.json();
+    console.log(`[optimize] ${req.user.email} ran ${action} on ${site.name} (${site.id})`);
+    res.json({ ok: true, action, result: data });
+  } catch (err) {
+    res.status(502).json({ ok: false, error: err.name === "TimeoutError" ? "The site took too long to respond" : err.message });
+  }
+});
+
 // Per-site history: uptime %, recent status changes, and metric samples for trends.
 app.get("/api/history/:siteId", requireAuth, async (req, res) => {
   const days = clamp(req.query.days || 30, 1, 90);

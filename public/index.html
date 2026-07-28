@@ -268,8 +268,12 @@
   .opt-desc { color: var(--muted); font-size: 12px; }
   .opt-result { grid-column: 1 / -1; font-size: 12px; padding: 8px 11px; border-radius: 8px; display: none; }
   .opt-result.ok, .opt-result.bad { display: block; }
-  .opt-result.ok { background: color-mix(in srgb, var(--ok) 12%, transparent); color: var(--ok); }
+  .opt-result.ok { background: color-mix(in srgb, var(--ok) 10%, transparent); color: var(--text); }
   .opt-result.bad { background: color-mix(in srgb, var(--fail) 12%, transparent); color: var(--err-text); }
+  .opt-line { padding: 2px 0; }
+  .opt-line .opt-ok { color: var(--ok); font-weight: 700; }
+  .opt-line .opt-dim { color: var(--muted); font-weight: 700; }
+  .opt-when { margin-top: 5px; color: var(--muted); font-size: 11px; font-family: var(--mono); }
 
   /* ---------- Responsive ---------- */
   @media (max-width: 900px) {
@@ -834,10 +838,21 @@ async function runOptimize(action, btn) {
     const j = await res.json();
     if (!j.ok) { if (out) { out.className = "opt-result bad"; out.textContent = j.error || "Failed"; } return; }
     const r = j.result || {};
-    const cleared = (r.cleared || []);
     if (out) {
       out.className = "opt-result ok";
-      out.textContent = cleared.length ? "Cleared: " + cleared.join(", ") : (r.skipped && r.skipped.join(", ")) || "Done — nothing to clear";
+      const layers = Array.isArray(r.layers) ? r.layers : null;
+      const when = r.ran_at ? new Date(r.ran_at).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" }) : null;
+      if (layers && layers.length) {
+        const rows = layers.map((l) => {
+          const mark = l.status === "verified" ? "✓" : "•";
+          const cls = l.status === "verified" ? "opt-ok" : "opt-dim";
+          return `<div class="opt-line"><span class="${cls}">${mark}</span> <b>${esc(l.name)}</b>${l.detail ? ` — ${esc(l.detail)}` : ""}</div>`;
+        }).join("");
+        out.innerHTML = rows + (when ? `<div class="opt-when">Verified at ${esc(when)}</div>` : "");
+      } else {
+        const cleared = r.cleared || [];
+        out.textContent = cleared.length ? "Cleared: " + cleared.join(", ") : (r.skipped && r.skipped.join(", ")) || "Done — nothing to clear";
+      }
     }
   } catch (e) { if (out) { out.className = "opt-result bad"; out.textContent = "Could not reach the server."; } }
   finally { btn.disabled = false; btn.textContent = label; }

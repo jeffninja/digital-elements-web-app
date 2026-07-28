@@ -1,5 +1,11 @@
 # Changelog — Digital Elements Helper Plugin
 
+## 2.3.1
+- Clear cache now verifies its work: it measures WP Rocket's cache folder
+  before and after purging and reports the actual file count removed, and uses
+  the object cache's real flush result. The dashboard shows a per-layer
+  verified/cleared status with details instead of a plain list.
+
 ## 2.3.0
 - New: website optimization actions triggered from the Digital Elements
   dashboard. Phase 1 adds "Clear cache" — a token-authenticated endpoint that

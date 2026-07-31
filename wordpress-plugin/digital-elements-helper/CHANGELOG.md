@@ -1,5 +1,11 @@
 # Changelog — Digital Elements Helper Plugin
 
+## 2.3.2
+- New optimization: "Remove transients" — clears all transients (not just
+  expired) and sweeps orphaned timeout rows from the options table, freeing
+  database bloat. Safe: transients are regenerable temporary data. Reports the
+  verified count removed.
+
 ## 2.3.1
 - Clear cache now verifies its work: it measures WP Rocket's cache folder
   before and after purging and reports the actual file count removed, and uses

@@ -817,6 +817,7 @@ function renderSiteDetailShell() {
 // Each action is a card; results render inline. More actions slot in here later.
 const OPTIMIZE_ACTIONS = [
   { key: "clear-cache", label: "Clear cache", desc: "Flush page, object and plugin caches. Safe — rebuilds automatically." },
+  { key: "remove-transients", label: "Remove transients", desc: "Clear all transients and orphaned rows from the database. Safe — regenerated on demand." },
 ];
 function fillOptimize() {
   const box = document.getElementById("sd-optimize");

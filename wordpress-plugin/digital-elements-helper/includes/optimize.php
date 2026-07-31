@@ -18,6 +18,11 @@ add_action('rest_api_init', function () {
         'permission_callback' => 'deheled_check_token',
         'callback'            => 'deheled_optimize_clear_cache',
     ));
+    register_rest_route('wpmonitor/v1', '/optimize/remove-transients', array(
+        'methods'             => 'POST',
+        'permission_callback' => 'deheled_check_token',
+        'callback'            => 'deheled_optimize_remove_transients',
+    ));
 });
 
 /** Where WP Rocket stores its page cache. Empty string if not determinable. */
@@ -152,6 +157,74 @@ function deheled_optimize_clear_cache() {
         'layers'  => $layers,
         'cleared' => $cleared,
         'skipped' => $skipped,
+        'ran_at'  => current_time('c'),
+    ));
+}
+
+/**
+ * Remove ALL transients (not just expired), plus any orphaned timeout rows.
+ *
+ * Transients are, by definition, regenerable temporary data with an expiry —
+ * WordPress and plugins recreate them on demand — so clearing them is safe and
+ * only frees bloat from the options table. Uses delete_transient() /
+ * delete_site_transient() so object-cache-backed transients are cleared too.
+ * Verified by counting transient option rows before and after.
+ */
+function deheled_optimize_remove_transients() {
+    global $wpdb;
+
+    $t_like    = $wpdb->esc_like('_transient_') . '%';
+    $tt_like   = $wpdb->esc_like('_transient_timeout_') . '%';
+    $st_like   = $wpdb->esc_like('_site_transient_') . '%';
+    $stt_like  = $wpdb->esc_like('_site_transient_timeout_') . '%';
+
+    // Count actual transients (exclude the paired *_timeout_ bookkeeping rows).
+    $count_sql = "SELECT COUNT(*) FROM {$wpdb->options}
+        WHERE (option_name LIKE %s AND option_name NOT LIKE %s)
+           OR (option_name LIKE %s AND option_name NOT LIKE %s)";
+    $before = (int) $wpdb->get_var($wpdb->prepare($count_sql, $t_like, $tt_like, $st_like, $stt_like));
+
+    // Delete via the API so the object cache is cleared alongside the DB row.
+    $removed = 0;
+    $names = $wpdb->get_col($wpdb->prepare(
+        "SELECT option_name FROM {$wpdb->options} WHERE option_name LIKE %s AND option_name NOT LIKE %s",
+        $t_like, $tt_like
+    ));
+    foreach ($names as $opt) {
+        if (delete_transient(substr($opt, strlen('_transient_')))) $removed++;
+    }
+    $snames = $wpdb->get_col($wpdb->prepare(
+        "SELECT option_name FROM {$wpdb->options} WHERE option_name LIKE %s AND option_name NOT LIKE %s",
+        $st_like, $stt_like
+    ));
+    foreach ($snames as $opt) {
+        if (delete_site_transient(substr($opt, strlen('_site_transient_')))) $removed++;
+    }
+
+    // Sweep up any orphaned timeout rows left behind (value without a pair).
+    $orphans = (int) $wpdb->query($wpdb->prepare(
+        "DELETE FROM {$wpdb->options} WHERE option_name LIKE %s OR option_name LIKE %s",
+        $tt_like, $stt_like
+    ));
+
+    $after = (int) $wpdb->get_var($wpdb->prepare($count_sql, $t_like, $tt_like, $st_like, $stt_like));
+
+    $verified = $after < $before || ($before === 0 && $removed === 0);
+    $detail = $before === 0
+        ? 'no transients to remove'
+        : sprintf('%d transient%s removed%s', $removed, $removed === 1 ? '' : 's',
+            $orphans > 0 ? sprintf(', %d orphaned row%s swept', $orphans, $orphans === 1 ? '' : 's') : '');
+
+    return rest_ensure_response(array(
+        'ok'      => true,
+        'action'  => 'remove-transients',
+        'layers'  => array(array(
+            'name'   => 'Transients',
+            'status' => $verified ? 'verified' : 'cleared',
+            'detail' => $detail,
+        )),
+        'cleared' => array('Transients'),
+        'skipped' => $before === 0 ? array('No transients found') : array(),
         'ran_at'  => current_time('c'),
     ));
 }

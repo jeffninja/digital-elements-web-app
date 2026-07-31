@@ -277,7 +277,10 @@ app.post("/api/task-comment/:siteId/:source/:taskId", requireAuth, async (req, r
 // ---- Website optimization actions (admin + web developer) ----
 // Each action proxies to the site's helper plugin, which does the real work on
 // WordPress. Phase 1: clear-cache. Guarded by manageWebsites + a valid license.
-const OPTIMIZE_ACTIONS = { "clear-cache": "optimize/clear-cache" };
+const OPTIMIZE_ACTIONS = {
+  "clear-cache": "optimize/clear-cache",
+  "remove-transients": "optimize/remove-transients",
+};
 
 app.post("/api/optimize/:siteId/:action", requireAuth, requirePerm("manageWebsites"), async (req, res) => {
   const action = req.params.action;

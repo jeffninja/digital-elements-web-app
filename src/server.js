@@ -24,6 +24,7 @@ import {
 } from "./db.js";
 import { configureAuth, requireAuth, requirePerm, sameOriginOnly, permsFor } from "./auth.js";
 import { rateLimit } from "./rateLimit.js";
+import { buildImageReport } from "./imageReport.js";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const PUBLIC = path.join(__dirname, "..", "public");
@@ -319,7 +320,11 @@ app.post("/api/optimize/:siteId/:action", requireAuth, requirePerm("manageWebsit
     if (!r.ok) return res.status(502).json({ ok: false, error: `Helper returned HTTP ${r.status}` });
     const data = await r.json();
     console.log(`[optimize] ${req.user.email} ran ${action} on ${site.name} (${site.id})`);
-    res.json({ ok: true, action, result: data });
+    // The image audit returns raw measurements; turn them into an actionable
+    // report here so the wording and priority thresholds can change without
+    // shipping a plugin update to every client site.
+    const report = action === "optimize-images" ? buildImageReport(data) : null;
+    res.json({ ok: true, action, result: data, ...(report ? { report } : {}) });
   } catch (err) {
     res.status(502).json({ ok: false, error: err.name === "TimeoutError" ? "The site took too long to respond" : err.message });
   }

@@ -1,5 +1,18 @@
 # Changelog — Digital Elements Helper Plugin
 
+## 2.5.0
+- Scan images now keeps a short history of past scans (totals and counts only —
+  no per-file data), so the dashboard can show what changed since last time.
+  The response carries the previous scan as `previous`, or null on a first run.
+- Fix: samples showed only the file's basename, so two different attachments in
+  different upload folders rendered as identical rows. They now show the
+  uploads-relative path (e.g. `2023/08/slide2.png`).
+- Fix: an image barely over the width threshold (e.g. 2580px, ~290 B
+  recoverable) could occupy a "worst offenders" slot that a multi-megabyte file
+  should have had. Samples now need a minimum estimated saving of 100 KB,
+  filterable via `deheled_images_sample_min_saving`. If nothing clears the bar,
+  the single largest is still shown rather than none.
+
 ## 2.4.0
 - New optimization: "Scan images" — audits the media library and reports images
   stored far wider than they are ever rendered, files over 500 KB, and JPEG/PNGs

@@ -19,6 +19,10 @@
 if (!defined('ABSPATH')) { exit; }
 
 define('DEHELED_IMG_OPTION', 'deheled_images_result');
+// Compact per-scan snapshots, so the dashboard can show before/after without
+// storing a second copy of the media library anywhere.
+define('DEHELED_IMG_HISTORY', 'deheled_images_history');
+define('DEHELED_IMG_HISTORY_MAX', 12);
 
 add_action('rest_api_init', function () {
     register_rest_route('wpmonitor/v1', '/optimize/images', array(
@@ -48,6 +52,10 @@ function deheled_images_config() {
         'large_bytes'   => max(50 * 1024, (int) apply_filters('deheled_images_large_bytes', 500 * 1024)),
         // Conservative mean saving from a WebP re-encode of a JPEG/PNG.
         'webp_ratio'    => 0.28,
+        // Samples are meant to show what's worth acting on. Without a floor, an
+        // image barely over the width threshold (e.g. 2580px, ~290 B recoverable)
+        // occupies a slot that a multi-megabyte offender should have.
+        'sample_min_saving' => max(0, (int) apply_filters('deheled_images_sample_min_saving', 100 * 1024)),
         // Hard caps so the scan can never run away on a huge library.
         'max_items'     => max(100, (int) apply_filters('deheled_images_max_items', 5000)),
         'budget_ms'     => max(2000, (int) apply_filters('deheled_images_budget_ms', 12000)),
@@ -133,9 +141,10 @@ function deheled_images_classify(array $items, array $cfg) {
     }
 
     // Keep only the highest-impact samples, biggest first.
-    $rep['oversized']['samples']    = deheled_images_top($rep['oversized']['samples'], 'est_saved', $cfg['samples']);
+    $floor = isset($cfg['sample_min_saving']) ? $cfg['sample_min_saving'] : 0;
+    $rep['oversized']['samples']    = deheled_images_top($rep['oversized']['samples'], 'est_saved', $cfg['samples'], $floor);
     $rep['large']['samples']        = deheled_images_top($rep['large']['samples'], 'bytes', $cfg['samples']);
-    $rep['missing_webp']['samples'] = deheled_images_top($rep['missing_webp']['samples'], 'est_saved', $cfg['samples']);
+    $rep['missing_webp']['samples'] = deheled_images_top($rep['missing_webp']['samples'], 'est_saved', $cfg['samples'], $floor);
 
     return $rep;
 }
@@ -145,15 +154,29 @@ function deheled_images_webp_candidate($mime) {
     return in_array($mime, array('image/jpeg', 'image/jpg', 'image/png'), true);
 }
 
-/** Sort descending by $key and take the first $n. */
-function deheled_images_top(array $rows, $key, $n) {
+/**
+ * Sort descending by $key and take the first $n.
+ *
+ * With a $min floor, only rows at or above it qualify — but if that would return
+ * nothing while rows exist, the single biggest is kept. A count with no example
+ * at all is less useful than one small example.
+ */
+function deheled_images_top(array $rows, $key, $n, $min = 0) {
     usort($rows, function ($a, $b) use ($key) {
         $av = isset($a[$key]) ? $a[$key] : 0;
         $bv = isset($b[$key]) ? $b[$key] : 0;
         if ($av === $bv) return 0;
         return ($av < $bv) ? 1 : -1;
     });
-    return array_slice($rows, 0, max(0, (int) $n));
+    $n = max(0, (int) $n);
+    if ($min > 0) {
+        $kept = array_values(array_filter($rows, function ($r) use ($key, $min) {
+            return (isset($r[$key]) ? $r[$key] : 0) >= $min;
+        }));
+        if (!$kept && $rows) $kept = array_slice($rows, 0, 1);
+        return array_slice($kept, 0, $n);
+    }
+    return array_slice($rows, 0, $n);
 }
 
 /**
@@ -225,9 +248,16 @@ function deheled_images_collect(array $cfg) {
                 }
             }
 
+            // Use the uploads-relative path (e.g. "2024/05/photo.jpg") rather than
+            // just the basename: distinct attachments in different month folders
+            // often share a filename and were rendering as identical rows.
+            $rel = isset($meta['file']) && $meta['file'] ? ltrim(str_replace('\\', '/', $meta['file']), '/') : '';
+            if (!$rel && $path) $rel = basename($path);
+            if (!$rel) $rel = '#' . $id;
+
             $items[] = array(
                 'id'       => (int) $id,
-                'file'     => $exists ? basename($path) : (isset($meta['file']) ? basename($meta['file']) : ('#' . $id)),
+                'file'     => $rel,
                 'mime'     => (string) get_post_mime_type($id),
                 'width'    => $width,
                 'height'   => $height,
@@ -317,6 +347,30 @@ function deheled_images_layers(array $rep, array $scan) {
 }
 
 /**
+ * A compact record of one scan — just the totals and counts, no per-file data.
+ * Kept so the dashboard can show what changed since last time without storing a
+ * second copy of the media library.
+ */
+function deheled_images_snapshot(array $images) {
+    return array(
+        'scanned_at_ts'   => (int) $images['scanned_at_ts'],
+        'scanned'         => (int) $images['scanned'],
+        'total_bytes'     => (int) $images['total_bytes'],
+        'est_total_bytes' => (int) $images['est_total_bytes'],
+        'oversized'       => (int) $images['oversized']['count'],
+        'large'           => (int) $images['large']['count'],
+        'missing_webp'    => (int) $images['missing_webp']['count'],
+        'missing_files'   => (int) $images['missing_files'],
+    );
+}
+
+/** Recorded scans, oldest first. */
+function deheled_images_history() {
+    $h = get_option(DEHELED_IMG_HISTORY, array());
+    return is_array($h) ? array_values(array_filter($h, 'is_array')) : array();
+}
+
+/**
  * REST handler. Serves a cached report unless it is stale or ?fresh=1, so the
  * dashboard gets an instant answer on repeat views and the expensive walk only
  * happens when it needs to.
@@ -335,6 +389,11 @@ function deheled_optimize_images($request = null) {
     $scan = deheled_images_collect($cfg);
     $rep  = deheled_images_classify($scan['items'], $cfg);
 
+    // Read history BEFORE recording this scan, so `previous` is the run before
+    // this one rather than this one.
+    $history  = deheled_images_history();
+    $previous = $history ? $history[count($history) - 1] : null;
+
     $payload = array(
         'ok'      => true,
         'action'  => 'optimize-images',
@@ -352,12 +411,23 @@ function deheled_optimize_images($request = null) {
             'large'           => $rep['large'],
             'missing_webp'    => $rep['missing_webp'],
             'duration_ms'     => $scan['duration_ms'],
+            'scanned_at_ts'   => time(),
         ),
+        // The scan immediately before this one, for before/after. Null on a first
+        // ever run — the dashboard must handle that rather than imply no change.
+        'previous'      => $previous,
         'read_only'     => true,
         'scanned_at_ts' => time(),
         'ran_at'        => current_time('c'),
         'cached'        => false,
     );
+
+    // Record this scan, keeping the tail bounded.
+    $history[] = deheled_images_snapshot($payload['images']);
+    if (count($history) > DEHELED_IMG_HISTORY_MAX) {
+        $history = array_slice($history, -DEHELED_IMG_HISTORY_MAX);
+    }
+    update_option(DEHELED_IMG_HISTORY, $history, false);
 
     update_option(DEHELED_IMG_OPTION, $payload, false); // not autoloaded
     return rest_ensure_response($payload);

@@ -122,7 +122,44 @@ and reports back per-layer results the dashboard renders inline.
 | --- | --- | --- |
 | **Clear cache** | 2.3+ | Flushes the object cache and any active caching plugin (WP Rocket, W3TC, WP Super Cache, LiteSpeed, Cloudflare, Autoptimize, SiteGround). Only regenerable caches — reversible by definition. |
 | **Remove transients** | 2.3.2+ | Deletes all transients and any genuinely orphaned timeout rows. Transients are regenerable temporary data. |
-| **Scan images** | 2.4+ | **Read-only audit.** Reports images stored far wider than they are rendered, files over 500 KB, and JPEG/PNGs with no WebP version, with an estimated recoverable size for each. Changes nothing. |
+| **Scan images** | 2.5+ | **Read-only audit.** Reports images stored far wider than they are rendered, files over 500 KB, and JPEG/PNGs with no WebP version, then turns those measurements into a prioritised, actionable report. Changes nothing. |
+
+### The Scan images report
+
+The plugin measures; the dashboard turns those measurements into recommendations
+in [`src/imageReport.js`](src/imageReport.js). That split is deliberate — wording
+and priority thresholds get tuned often, and keeping them server-side means no
+plugin release to every client site, plus the logic is testable without WordPress.
+
+Each report contains:
+
+- **A summary** — issue count, recoverable size as an absolute and as a share of
+  media weight, and a breakdown by priority.
+- **One block per issue**, worst first, each with why it matters, the recommended
+  change, numbered steps to carry it out, the worst offending files, and how to
+  verify the change worked.
+- **Priority** — Critical / High / Medium / Low, **derived from measured impact**,
+  never hand-assigned, so it can't drift out of step with the numbers beside it.
+  Both absolute size and proportion count: 20 MB matters on a 40 MB library and
+  barely registers on a 4 GB one. Critical is deliberately hard to reach.
+- **Before / after** — every metric against the previous scan, with signed deltas.
+  A first scan says it has no baseline rather than implying nothing changed, and
+  an unchanged scan reads "no change" rather than as an improvement.
+
+Two things the report is careful about, both worth preserving if you extend it:
+
+- **No double-counting.** "Files over 500 KB" describes the same bytes as the
+  resize and WebP issues, so it contributes **zero** to the headline total. Left
+  unchecked, overlapping rules inflate the figure past what is actually
+  recoverable.
+- **Estimates stay labelled.** Savings come from pixel area and a typical WebP
+  ratio, not measured re-encodes. The area model holds up for PNG and is rougher
+  for JPEG.
+
+Issue IDs (`images.oversized`, `images.webp`, `images.large`,
+`images.missing_files`) are stable so per-issue workflow state can attach to them
+later. Every issue currently reports `status: "pending"`; approval and status
+transitions are the next increment.
 
 Notes on **Scan images** specifically, since its output feeds the monthly
 optimization workflow:

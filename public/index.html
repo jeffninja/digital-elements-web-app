@@ -277,6 +277,43 @@
   /* Indented sample rows under an image-audit finding. */
   .opt-sub { padding: 1px 0 1px 16px; color: var(--muted); font-size: 11px; font-family: var(--mono); overflow-wrap: anywhere; }
 
+  /* ---- Image audit report ---- */
+  .ir-sum { margin: 10px 0 4px; padding: 10px 12px; border: 1px solid var(--line); border-radius: 8px; background: rgba(255,255,255,.02); }
+  .ir-head { font-size: 13px; font-weight: 650; }
+  .ir-sub { color: var(--muted); font-size: 11px; margin-top: 3px; }
+  .ir-chips { display: flex; flex-wrap: wrap; gap: 5px; margin-top: 7px; }
+  .ir-chip { font-size: 10px; font-weight: 700; letter-spacing: .03em; text-transform: uppercase; padding: 2px 7px; border-radius: 99px; border: 1px solid transparent; }
+  .ir-critical { background: rgba(226,75,74,.16); color: #ff9a99; border-color: rgba(226,75,74,.45); }
+  .ir-high     { background: rgba(239,127,39,.16); color: #ffb072; border-color: rgba(239,127,39,.45); }
+  .ir-medium   { background: rgba(239,183,39,.14); color: #f0cc72; border-color: rgba(239,183,39,.4); }
+  .ir-low      { background: rgba(120,140,170,.14); color: #a8b6cc; border-color: rgba(120,140,170,.35); }
+  .ir-status   { background: rgba(120,140,170,.12); color: var(--muted); border-color: rgba(120,140,170,.3); }
+
+  .ir-issue { border: 1px solid var(--line); border-radius: 8px; margin-top: 8px; overflow: hidden; }
+  .ir-issue > summary { cursor: pointer; padding: 9px 12px; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; list-style: none; }
+  .ir-issue > summary::-webkit-details-marker { display: none; }
+  .ir-issue > summary::before { content: "\25b8"; color: var(--muted); font-size: 10px; }
+  .ir-issue[open] > summary::before { content: "\25be"; }
+  .ir-issue[open] > summary { border-bottom: 1px solid var(--line); }
+  .ir-title { font-weight: 600; font-size: 12px; }
+  .ir-gain { color: var(--ok); font-family: var(--mono); font-size: 11px; margin-left: auto; white-space: nowrap; }
+  .ir-body { padding: 10px 12px; font-size: 12px; }
+  .ir-body h5 { margin: 10px 0 4px; font-size: 11px; text-transform: uppercase; letter-spacing: .04em; color: var(--muted); font-weight: 700; }
+  .ir-body h5:first-child { margin-top: 0; }
+  .ir-body p { margin: 0; color: var(--fg); }
+  .ir-body ol { margin: 0; padding-left: 18px; }
+  .ir-body ol li { margin: 3px 0; }
+  .ir-verify { border-left: 2px solid var(--ok); padding: 5px 0 5px 9px; color: var(--muted); }
+  .ir-note { color: var(--muted); font-size: 11px; font-style: italic; margin-top: 8px; }
+
+  .ir-cmp { margin-top: 10px; border: 1px solid var(--line); border-radius: 8px; padding: 9px 12px; }
+  .ir-cmp table { width: 100%; border-collapse: collapse; font-size: 11px; }
+  .ir-cmp th { text-align: left; color: var(--muted); font-weight: 600; padding: 3px 6px 5px 0; }
+  .ir-cmp td { padding: 3px 6px 3px 0; font-family: var(--mono); }
+  .ir-better { color: var(--ok); }
+  .ir-worse  { color: var(--fail); }
+  .ir-same   { color: var(--muted); }
+
   /* ---------- Responsive ---------- */
   @media (max-width: 900px) {
     .app { grid-template-columns: 1fr; }
@@ -855,6 +892,91 @@ const fmtBytes = (n) => {
   const v = n / Math.pow(1024, i);
   return (i === 0 ? String(n) : v.toFixed(v < 10 ? 1 : 0)) + " " + u[i];
 };
+// ---------- Image audit report ----------
+// Renders the server-built report (src/imageReport.js): summary, then one
+// collapsible block per issue ordered by priority, then before/after.
+// All file names and text come from a client site, so everything is escaped.
+const CMP_LABELS = {
+  total_bytes: ["Media library size", true],
+  est_total_bytes: ["Estimated recoverable", true],
+  oversized: ["Oversized images", false],
+  missing_webp: ["Missing WebP", false],
+  large: ["Files over threshold", false],
+};
+
+function renderComparison(cmp) {
+  if (!cmp) return "";
+  if (!cmp.available) {
+    return `<div class="ir-cmp"><h5 style="margin:0 0 4px">Before / after</h5><div class="ir-sub">${esc(cmp.reason || "No previous scan to compare against.")}</div></div>`;
+  }
+  const when = cmp.previousAt ? new Date(cmp.previousAt * 1000).toLocaleString() : "the previous scan";
+  const rows = cmp.metrics.map((m) => {
+    const [label, isBytes] = CMP_LABELS[m.key] || [m.key, false];
+    const fmt = (v) => (isBytes ? fmtBytes(v) : String(v));
+    const cls = m.unchanged ? "ir-same" : m.improved ? "ir-better" : "ir-worse";
+    const sign = m.delta > 0 ? "+" : m.delta < 0 ? "−" : "";
+    const delta = m.unchanged ? "no change" : `${sign}${fmt(Math.abs(m.delta))}`;
+    return `<tr><td>${esc(label)}</td><td>${esc(fmt(m.previous))}</td><td>${esc(fmt(m.current))}</td><td class="${cls}">${esc(delta)}</td></tr>`;
+  }).join("");
+  return `<div class="ir-cmp">
+    <h5 style="margin:0 0 6px">Before / after <span class="ir-sub" style="font-weight:400">vs ${esc(when)}</span></h5>
+    <table><thead><tr><th>Metric</th><th>Before</th><th>Now</th><th>Change</th></tr></thead><tbody>${rows}</tbody></table>
+  </div>`;
+}
+
+function renderIssue(iss) {
+  const gain = iss.impact && iss.impact.label
+    ? `~${esc(iss.impact.label)} recoverable${iss.impact.share ? ` · ${esc(iss.impact.share)}` : ""}`
+    : "";
+  const steps = (iss.steps || []).map((s) => `<li>${esc(s)}</li>`).join("");
+  const samples = (iss.samples || []).length
+    ? `<h5>Worst offenders</h5>` + iss.samples.map((s) => {
+        const dims = s.width && s.height ? ` · ${esc(String(s.width))}×${esc(String(s.height))}` : "";
+        const saved = s.est_saved ? ` · ~${esc(fmtBytes(s.est_saved))} recoverable` : "";
+        return `<div class="opt-sub">${esc(s.file)} — ${esc(fmtBytes(s.bytes))}${dims}${saved}</div>`;
+      }).join("")
+    : "";
+  return `<details class="ir-issue">
+    <summary>
+      <span class="ir-chip ir-${esc(iss.priority)}">${esc(iss.priority)}</span>
+      <span class="ir-chip ir-status">${esc(iss.status || "pending")}</span>
+      <span class="ir-title">${esc(iss.title)}</span>
+      ${gain ? `<span class="ir-gain">${gain}</span>` : ""}
+    </summary>
+    <div class="ir-body">
+      <h5>Why it matters</h5><p>${esc(iss.why)}</p>
+      <h5>Recommended change</h5><p>${esc(iss.recommendation)}</p>
+      ${steps ? `<h5>What to do</h5><ol>${steps}</ol>` : ""}
+      ${samples}
+      <h5>How to verify</h5><p class="ir-verify">${esc(iss.verify)}</p>
+      ${iss.note ? `<div class="ir-note">${esc(iss.note)}</div>` : ""}
+      ${iss.caveat ? `<div class="ir-note">${esc(iss.caveat)}</div>` : ""}
+    </div>
+  </details>`;
+}
+
+function renderImageReport(rep) {
+  if (!rep) return "";
+  const s = rep.summary;
+  const chips = ["critical", "high", "medium", "low"]
+    .filter((p) => s.counts && s.counts[p])
+    .map((p) => `<span class="ir-chip ir-${p}">${s.counts[p]} ${p}</span>`).join("");
+  const partial = s.partial
+    ? `<div class="ir-sub">Partial scan — ${esc(s.partialReason || "")}. Counts cover only what was scanned.</div>`
+    : "";
+  return `<div class="ir-sum">
+      <div class="ir-head">${esc(s.headline)}</div>
+      <div class="ir-sub">${esc(String(s.scanned))} images · ${esc(s.totalLabel)} total${s.recoverableShare ? ` · ${esc(s.recoverableShare)} recoverable` : ""}</div>
+      ${partial}
+      ${chips ? `<div class="ir-chips">${chips}</div>` : ""}
+    </div>
+    ${rep.issues.map(renderIssue).join("")}
+    ${renderComparison(rep.comparison)}
+    <div class="ir-note">${esc(rep.estimatesCaveat)}</div>`;
+}
+
+// Legacy inline detail, kept for helper plugins older than 2.5 that return
+// measurements the server can't build a report from.
 function renderImageAudit(r) {
   const im = r && r.images;
   if (!im) return "";
@@ -910,7 +1032,10 @@ async function runOptimize(action, btn) {
           const cls = l.status === "verified" ? "opt-ok" : "opt-dim";
           return `<div class="opt-line"><span class="${cls}">${mark}</span> <b>${esc(l.name)}</b>${l.detail ? ` — ${esc(l.detail)}` : ""}</div>`;
         }).join("");
-        out.innerHTML = rows + renderImageAudit(r) + (when ? `<div class="opt-when">Verified at ${esc(when)}</div>` : "");
+        // Prefer the server-built report; fall back to the inline detail when an
+        // older helper plugin returns measurements it can't be built from.
+        const detail = j.report ? renderImageReport(j.report) : renderImageAudit(r);
+        out.innerHTML = rows + detail + (when ? `<div class="opt-when">Verified at ${esc(when)}</div>` : "");
       } else {
         const cleared = r.cleared || [];
         out.textContent = cleared.length ? "Cleared: " + cleared.join(", ") : (r.skipped && r.skipped.join(", ")) || "Done — nothing to clear";
